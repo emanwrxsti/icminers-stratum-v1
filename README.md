@@ -1,0 +1,1 @@
+# icminers-stratum-v1

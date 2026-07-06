@@ -1,0 +1,295 @@
+// Package config loads and validates the GoStratumPool configuration.
+//
+// Stage 1 uses JSON (like Miningcore) so the loader is pure standard library
+// and compiles with zero external dependencies. When the yaml module is
+// whitelisted in a later stage the loader can gain a YAML front-end without
+// touching any of the consuming code; everything downstream depends only on
+// the typed structs below.
+package config
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+)
+
+// DeploymentMode selects how this process behaves. See the architecture doc.
+type DeploymentMode string
+
+const (
+	ModeAllInOne DeploymentMode = "all-in-one" // dev: everything in one process
+	ModeMaster   DeploymentMode = "master"     // owns PostgreSQL, coin configs, rewards
+	ModeRegional DeploymentMode = "regional"   // accepts miners, validates, forwards shares
+)
+
+// Config is the root configuration object.
+type Config struct {
+	// Mode is the deployment mode for this process.
+	Mode DeploymentMode `json:"mode"`
+	// Region is a free-form label (e.g. "us", "eu", "asia") used for stats and
+	// share provenance. Required in regional mode.
+	Region string `json:"region"`
+	// NodeID uniquely identifies this process within a region.
+	NodeID string `json:"nodeId"`
+
+	Logging LoggingConfig `json:"logging"`
+	Stratum StratumConfig `json:"stratum"`
+
+	// Pools declares every pool/coin this process is aware of. Each is an
+	// isolated service with its own lifecycle (see the isolation spec).
+	Pools []PoolConfig `json:"pools"`
+	// Coins declares coin-level daemon connectivity, keyed by symbol.
+	Coins []CoinConfig `json:"coins"`
+}
+
+// LoggingConfig controls the root logger.
+type LoggingConfig struct {
+	Level string `json:"level"`
+	JSON  bool   `json:"json"`
+}
+
+// StratumConfig groups the stratum-facing listener settings.
+type StratumConfig struct {
+	// BindAddress is the interface stratum ports listen on, e.g. "0.0.0.0".
+	BindAddress string `json:"bindAddress"`
+	// Ports is the set of TCP ports miners can connect to. Each maps to exactly
+	// one pool.
+	Ports []PortConfig `json:"ports"`
+	// MaxConnPerIP caps simultaneous connections from a single IP (0 = no cap).
+	MaxConnPerIP int `json:"maxConnPerIp"`
+	// ReadTimeout bounds how long a socket may be idle before being dropped.
+	ReadTimeout Duration `json:"readTimeout"`
+	// MaxLineBytes caps a single JSON-RPC line to defend against memory-abuse
+	// spam. 0 falls back to a safe default.
+	MaxLineBytes int `json:"maxLineBytes"`
+}
+
+// PortConfig describes one stratum listening port. Each port maps to one pool.
+type PortConfig struct {
+	Port   int    `json:"port"`
+	PoolID string `json:"poolId"`
+
+	// VarDiff toggles per-worker variable difficulty. When false, Difficulty is
+	// a fixed starting/only difficulty.
+	VarDiff bool `json:"varDiff"`
+
+	Difficulty float64 `json:"difficulty"`
+	MinDiff    float64 `json:"minDiff"`
+	MaxDiff    float64 `json:"maxDiff"`
+
+	// TLS is reserved: Stage 1 designs for it but does not terminate TLS yet.
+	TLS bool `json:"tls"`
+}
+
+// PoolLifecycleState mirrors pool.State but lives here so config can declare an
+// initial state without importing the pool package (avoids an import cycle).
+type PoolLifecycleState string
+
+const (
+	StateActive      PoolLifecycleState = "active"
+	StateDraining    PoolLifecycleState = "draining"
+	StateMaintenance PoolLifecycleState = "maintenance"
+	StatePaused      PoolLifecycleState = "paused"
+	StateDisabled    PoolLifecycleState = "disabled"
+	StateError       PoolLifecycleState = "error"
+)
+
+// PoolConfig declares one pool/coin service.
+type PoolConfig struct {
+	ID      string `json:"id"`
+	Enabled bool   `json:"enabled"`
+	// CoinSymbol links this pool to a CoinConfig.
+	CoinSymbol string `json:"coinSymbol"`
+	// PaymentMode is one of "pplns", "prop", "solo".
+	PaymentMode string `json:"paymentMode"`
+	// InitialState is the lifecycle state to boot into (default active).
+	InitialState PoolLifecycleState `json:"initialState"`
+	// MaintenanceMessage is returned to miners that try to authorize while the
+	// pool is in maintenance.
+	MaintenanceMessage string `json:"maintenanceMessage"`
+	// PoolFeePercent is subtracted from block rewards.
+	PoolFeePercent float64 `json:"poolFeePercent"`
+
+	// TemplatePollInterval controls how often the template poller runs (later
+	// stages). Kept here so the field is stable from the start.
+	TemplatePollInterval Duration `json:"templatePollInterval"`
+	// ErrorBackoff controls retry delay when a pool is in the error state.
+	ErrorBackoff Duration `json:"errorBackoff"`
+}
+
+// CoinConfig describes a coin daemon.
+type CoinConfig struct {
+	Symbol string `json:"symbol"`
+	Name   string `json:"name"`
+	Algo   string `json:"algo"`
+
+	RPCURL      string `json:"rpcUrl"`
+	RPCUser     string `json:"rpcUser"`
+	RPCPassword string `json:"rpcPassword"`
+}
+
+// Load reads, parses, and validates a JSON config file, applying defaults.
+func Load(path string) (*Config, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read config %q: %w", path, err)
+	}
+	var cfg Config
+	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&cfg); err != nil {
+		return nil, fmt.Errorf("parse config %q: %w", path, err)
+	}
+	cfg.applyDefaults()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func (c *Config) applyDefaults() {
+	if c.Mode == "" {
+		c.Mode = ModeAllInOne
+	}
+	if c.Logging.Level == "" {
+		c.Logging.Level = "info"
+	}
+	if c.Stratum.BindAddress == "" {
+		c.Stratum.BindAddress = "0.0.0.0"
+	}
+	if c.Stratum.MaxLineBytes == 0 {
+		c.Stratum.MaxLineBytes = 64 * 1024
+	}
+	if c.Stratum.ReadTimeout == 0 {
+		c.Stratum.ReadTimeout = Duration(10 * time.Minute)
+	}
+	for i := range c.Pools {
+		if c.Pools[i].InitialState == "" {
+			c.Pools[i].InitialState = StateActive
+		}
+		if c.Pools[i].TemplatePollInterval == 0 {
+			c.Pools[i].TemplatePollInterval = Duration(500 * time.Millisecond)
+		}
+		if c.Pools[i].ErrorBackoff == 0 {
+			c.Pools[i].ErrorBackoff = Duration(15 * time.Second)
+		}
+	}
+}
+
+// Validate checks structural invariants that would otherwise fail confusingly
+// at runtime.
+func (c *Config) Validate() error {
+	switch c.Mode {
+	case ModeAllInOne, ModeMaster, ModeRegional:
+	default:
+		return fmt.Errorf("invalid mode %q", c.Mode)
+	}
+	if c.Mode == ModeRegional && c.Region == "" {
+		return fmt.Errorf("region is required in regional mode")
+	}
+
+	poolIDs := map[string]bool{}
+	for _, p := range c.Pools {
+		if p.ID == "" {
+			return fmt.Errorf("pool with empty id")
+		}
+		if poolIDs[p.ID] {
+			return fmt.Errorf("duplicate pool id %q", p.ID)
+		}
+		poolIDs[p.ID] = true
+		switch strings.ToLower(p.PaymentMode) {
+		case "", "pplns", "prop", "solo":
+		default:
+			return fmt.Errorf("pool %q: invalid paymentMode %q", p.ID, p.PaymentMode)
+		}
+	}
+
+	coinSymbols := map[string]bool{}
+	for _, coin := range c.Coins {
+		if coin.Symbol == "" {
+			return fmt.Errorf("coin with empty symbol")
+		}
+		coinSymbols[strings.ToUpper(coin.Symbol)] = true
+	}
+
+	seenPorts := map[int]bool{}
+	for _, prt := range c.Stratum.Ports {
+		if prt.Port <= 0 || prt.Port > 65535 {
+			return fmt.Errorf("invalid stratum port %d", prt.Port)
+		}
+		if seenPorts[prt.Port] {
+			return fmt.Errorf("duplicate stratum port %d", prt.Port)
+		}
+		seenPorts[prt.Port] = true
+		if prt.PoolID == "" {
+			return fmt.Errorf("stratum port %d has no poolId", prt.Port)
+		}
+		if !poolIDs[prt.PoolID] {
+			return fmt.Errorf("stratum port %d maps to unknown poolId %q", prt.Port, prt.PoolID)
+		}
+		if prt.VarDiff {
+			if prt.MinDiff <= 0 || prt.MaxDiff <= 0 || prt.MinDiff > prt.MaxDiff {
+				return fmt.Errorf("stratum port %d: invalid vardiff min/max", prt.Port)
+			}
+		} else if prt.Difficulty <= 0 {
+			return fmt.Errorf("stratum port %d: fixed difficulty must be > 0", prt.Port)
+		}
+	}
+
+	// Pools referencing a coin must reference one that exists (when any coins
+	// are declared at all; Stage 1 configs may omit coins entirely).
+	if len(c.Coins) > 0 {
+		for _, p := range c.Pools {
+			if p.CoinSymbol != "" && !coinSymbols[strings.ToUpper(p.CoinSymbol)] {
+				return fmt.Errorf("pool %q references unknown coin %q", p.ID, p.CoinSymbol)
+			}
+		}
+	}
+	return nil
+}
+
+// PoolByID returns the pool config with the given id, if present.
+func (c *Config) PoolByID(id string) (PoolConfig, bool) {
+	for _, p := range c.Pools {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return PoolConfig{}, false
+}
+
+// Duration is a time.Duration that (de)serializes from a human string such as
+// "500ms" or "15s" in JSON, while remaining a plain duration in Go code.
+type Duration time.Duration
+
+// MarshalJSON renders the duration as a Go duration string.
+func (d Duration) MarshalJSON() ([]byte, error) {
+	return json.Marshal(time.Duration(d).String())
+}
+
+// UnmarshalJSON accepts either a duration string ("15s") or a number of
+// nanoseconds.
+func (d *Duration) UnmarshalJSON(b []byte) error {
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	switch val := v.(type) {
+	case float64:
+		*d = Duration(time.Duration(val))
+	case string:
+		parsed, err := time.ParseDuration(val)
+		if err != nil {
+			return fmt.Errorf("invalid duration %q: %w", val, err)
+		}
+		*d = Duration(parsed)
+	default:
+		return fmt.Errorf("invalid duration value %v", v)
+	}
+	return nil
+}
+
+// D returns the value as a time.Duration.
+func (d Duration) D() time.Duration { return time.Duration(d) }

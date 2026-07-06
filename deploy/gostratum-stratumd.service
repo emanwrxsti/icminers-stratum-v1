@@ -1,0 +1,28 @@
+[Unit]
+Description=GoStratumPool stratum node (stratumd)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gostratum
+Group=gostratum
+WorkingDirectory=/opt/gostratumpool
+ExecStart=/opt/gostratumpool/bin/stratumd -config /opt/gostratumpool/configs/config.json
+Restart=on-failure
+RestartSec=5
+
+# stratumd handles SIGTERM as a graceful drain-and-stop.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/gostratumpool/spool /opt/gostratumpool/logs
+PrivateTmp=true
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

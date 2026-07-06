@@ -1,0 +1,139 @@
+{
+  "mode": "all-in-one",
+  "region": "us",
+  "nodeId": "us-dev-1",
+
+  "logging": {
+    "level": "info",
+    "json": false
+  },
+
+  "stratum": {
+    "bindAddress": "0.0.0.0",
+    "maxConnPerIp": 256,
+    "readTimeout": "10m",
+    "maxLineBytes": 65536,
+    "ports": [
+      { "port": 3333, "poolId": "btc-shared", "difficulty": 1024 },
+      { "port": 3334, "poolId": "btc-solo", "varDiff": true, "minDiff": 16, "maxDiff": 4294967296 },
+      { "port": 3335, "poolId": "rxd-shared", "difficulty": 1024 },
+      { "port": 3336, "poolId": "rxd-solo", "varDiff": true, "minDiff": 16, "maxDiff": 4294967296 },
+      { "port": 3337, "poolId": "scash-shared", "difficulty": 1024 },
+      { "port": 3338, "poolId": "scash-solo", "varDiff": true, "minDiff": 16, "maxDiff": 4294967296 },
+      { "port": 3339, "poolId": "alph-shared", "difficulty": 1024 },
+      { "port": 3340, "poolId": "alph-solo", "varDiff": true, "minDiff": 16, "maxDiff": 4294967296 }
+    ]
+  },
+
+  "pools": [
+    {
+      "id": "btc-shared",
+      "enabled": true,
+      "coinSymbol": "BTC",
+      "paymentMode": "pplns",
+      "initialState": "active",
+      "poolFeePercent": 0.5,
+      "maintenanceMessage": "BTC shared pool is under maintenance. Please reconnect later.",
+      "templatePollInterval": "500ms",
+      "errorBackoff": "15s"
+    },
+    {
+      "id": "btc-solo",
+      "enabled": true,
+      "coinSymbol": "BTC",
+      "paymentMode": "solo",
+      "initialState": "active",
+      "poolFeePercent": 0.5,
+      "maintenanceMessage": "BTC solo pool is under maintenance. Please reconnect later."
+    },
+    {
+      "id": "rxd-shared",
+      "enabled": true,
+      "coinSymbol": "RXD",
+      "paymentMode": "pplns",
+      "initialState": "active",
+      "poolFeePercent": 0.5,
+      "maintenanceMessage": "Radiant shared pool is under maintenance. Please reconnect later."
+    },
+    {
+      "id": "rxd-solo",
+      "enabled": true,
+      "coinSymbol": "RXD",
+      "paymentMode": "solo",
+      "initialState": "active",
+      "poolFeePercent": 0.5,
+      "maintenanceMessage": "Radiant solo pool is under maintenance. Please reconnect later."
+    },
+    {
+      "id": "scash-shared",
+      "enabled": true,
+      "coinSymbol": "SCASH",
+      "paymentMode": "pplns",
+      "initialState": "active",
+      "poolFeePercent": 0.5,
+      "maintenanceMessage": "SCASH shared pool is under maintenance. Please reconnect later."
+    },
+    {
+      "id": "scash-solo",
+      "enabled": true,
+      "coinSymbol": "SCASH",
+      "paymentMode": "solo",
+      "initialState": "active",
+      "poolFeePercent": 0.5,
+      "maintenanceMessage": "SCASH solo pool is under maintenance. Please reconnect later."
+    },
+    {
+      "id": "alph-shared",
+      "enabled": true,
+      "coinSymbol": "ALPH",
+      "paymentMode": "pplns",
+      "initialState": "active",
+      "poolFeePercent": 0.5,
+      "maintenanceMessage": "Alephium shared pool is under maintenance. Please reconnect later."
+    },
+    {
+      "id": "alph-solo",
+      "enabled": true,
+      "coinSymbol": "ALPH",
+      "paymentMode": "solo",
+      "initialState": "active",
+      "poolFeePercent": 0.5,
+      "maintenanceMessage": "Alephium solo pool is under maintenance. Please reconnect later."
+    }
+  ],
+
+  "coins": [
+    {
+      "symbol": "BTC",
+      "name": "Bitcoin",
+      "algo": "sha256d",
+      "rpcUrl": "http://127.0.0.1:8332",
+      "rpcUser": "rpcuser",
+      "rpcPassword": "rpcpassword"
+    },
+    {
+      "symbol": "RXD",
+      "name": "Radiant",
+      "algo": "sha512256d",
+      "rpcUrl": "http://127.0.0.1:17543",
+      "rpcUser": "rpcuser",
+      "rpcPassword": "rpcpassword"
+    },
+    {
+      "symbol": "SCASH",
+      "name": "SCASH",
+      "algo": "randomx",
+      "rpcUrl": "http://127.0.0.1:8645",
+      "rpcUser": "rpcuser",
+      "rpcPassword": "rpcpassword"
+    },
+    {
+      "symbol": "ALPH",
+      "name": "Alephium",
+      "algo": "alephium",
+      "rpcUrl": "http://127.0.0.1:12973",
+      "rpcUser": "rpcuser",
+      "rpcPassword": "rpcpassword"
+    }
+  ]
+}

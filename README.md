@@ -5,13 +5,28 @@ supervisor**: every coin/pool runs as an isolated service with its own lifecycle
 context, and goroutines, so maintaining, restarting, or breaking one coin never
 affects any other pool or the global stratum server.
 
-This repository is being built in clean stages. **Stage 1 is complete and this
-is the current milestone**: a compiling, tested, zero-dependency stratum core
-that accepts miners, handles the subscribe/authorize/configure handshake, and
-enforces per-pool lifecycle isolation. Later stages add the daemon RPC client,
-job manager, share validation, PostgreSQL, the REST API, NATS master/regional
-messaging, and the PPLNS/PROP/SOLO reward calculators. See
-[docs/roadmap.md](docs/roadmap.md) for exactly what is done and what is pending.
+This repository is being built in clean stages. **Stages 1–6 are complete and
+this is the current milestone**: a compiling, tested, zero-dependency BTC pool
+core. Miners subscribe/authorize, receive real Bitcoin Core
+`getblocktemplate`-derived `mining.notify` jobs (coinbase split, merkle
+branch, cleanJobs semantics), and submit shares that are fully validated in
+memory — header reconstruction, share/network target checks, version rolling,
+ntime window, duplicate detection — with block candidates assembled
+(witness-aware) and pushed to the daemon via `submitblock` off the reply path.
+Accepted shares and found blocks now persist to PostgreSQL through an async
+batched writer that keeps every database write off the stratum submit path
+(monthly-partitioned `shares`, idempotent `blocks`). An in-process HTTP API serves live stats
+(hashrate, shares, blocks per pool and miner), DB-backed block/miner history,
+and token-guarded per-pool admin lifecycle control
+(pause/resume/drain/maintenance/restart/disable). Master/regional deployment is live: regional stratum
+nodes publish shares, blocks, and pool-state over NATS JetStream (with a
+bounded disk spool that survives full NATS outages), the master consumes them
+into PostgreSQL, and the master's admin API issues per-pool lifecycle commands
+that every regional follows. The remaining stages add the PPLNS/PROP/SOLO
+reward calculators and hardening (vardiff controller, banning, metrics). RXD, SCASH, and ALPH
+are intentionally not implemented yet. See [docs/roadmap.md](docs/roadmap.md)
+for exactly what is done and what is pending. CI runs gofmt/vet/test/race/build
+on every push (`.github/workflows/go.yml`).
 
 ## Design guarantees baked in from Stage 1
 
@@ -26,9 +41,21 @@ messaging, and the PPLNS/PROP/SOLO reward calculators. See
 - **Coin-agnostic core.** All coin logic lives behind `coins.CoinAdapter`; the
   stratum server has zero coin-specific code.
 
+## Dependency note
+
+`go.sum` was generated in an offline environment where `golang.org/x/*` and
+`gopkg.in/*` modules were mirrored from their GitHub sources (the module
+proxy was unreachable). The zip hashes should match the official proxy; if CI
+ever reports a checksum mismatch on those modules, regenerate with:
+
+```
+go clean -modcache && rm go.sum && go mod tidy
+```
+
 ## Requirements
 
-- Go 1.22 or newer. Stage 1 has **no external dependencies** (pure standard
+- Go 1.22 or newer. External dependencies: `github.com/jackc/pgx/v5` (Stage 4)
+  and `github.com/nats-io/nats.go` (Stage 6); everything else is the standard
   library), so it builds fully offline. `pgx`, NATS, and a YAML front-end are
   introduced in the stages that need them.
 
@@ -42,7 +69,7 @@ go build -o bin/stratumd ./cmd/stratumd
 ```
 
 You should see each configured port bind to its pool. Point a miner (or a plain
-TCP client) at `127.0.0.1:3333` and send `mining.subscribe` then
+TCP client) at `127.0.0.1:3032` and send `mining.subscribe` then
 `mining.authorize`; you will receive an extranonce1, a subscription reply, and a
 `mining.set_difficulty` notification. Share submission returns an honest
 "not enabled yet (stage 3)" error until the job manager lands.
@@ -67,15 +94,15 @@ shared coin.
 ## Per-pool maintenance (the core operational workflow)
 
 Every pool has an independent lifecycle: `active`, `draining`, `maintenance`,
-`paused`, `disabled`, `error`. To work on only ALPH while everything else
+`paused`, `disabled`, `error`. To work on only Flowcoin while everything else
 keeps mining:
 
-1. Drain `alph-shared` (stops new jobs, keeps accepting in-flight shares).
+1. Drain `flowcoin-shared` (stops new jobs, keeps accepting in-flight shares).
 2. Wait out the grace period; it auto-advances to `maintenance`.
-3. Restart/edit the ALPH daemon or adapter.
-4. Resume `alph-shared`.
+3. Restart/edit the Flowcoin daemon or adapter.
+4. Resume `flowcoin-shared`.
 
-BTC, Radiant, SCASH, and the other Alephium pool stay online the entire time. Once the
+Bitcoin, Radiant, and every other pool stay online the entire time. Once the
 admin API lands (Stage 5) these map to:
 
 ```
@@ -105,7 +132,7 @@ ranges, and invalid payment modes are all rejected at load time.
 
 ## Adding a coin
 
-See [docs/coin-plan.md](docs/coin-plan.md) for the initial BTC/RXD/SCASH/ALPH order, then [docs/adding-a-coin.md](docs/adding-a-coin.md). In short: implement
+See [docs/adding-a-coin.md](docs/adding-a-coin.md). In short: implement
 `coins.CoinAdapter`, reuse `internal/stratum/vardiff` for target math, and
 register the coin/pool/port in config.
 
@@ -145,4 +172,4 @@ to avoid shipping empty scaffolding that does not compile to anything useful yet
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Zero dev fee. Free for the mining community.

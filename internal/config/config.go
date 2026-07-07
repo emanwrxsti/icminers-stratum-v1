@@ -42,6 +42,36 @@ type Config struct {
 	Pools []PoolConfig `json:"pools"`
 	// Coins declares coin-level daemon connectivity, keyed by symbol.
 	Coins []CoinConfig `json:"coins"`
+
+	// Postgres configures Stage 4 persistence. Disabled by default so the
+	// stratum core keeps running databaseless (dev, regionals in Stage 6).
+	Postgres PostgresConfig `json:"postgres"`
+
+	// API configures the HTTP interface (public stats + admin lifecycle).
+	API APIConfig `json:"api"`
+
+	// NATS configures Stage 6 master/regional messaging.
+	NATS NATSConfig `json:"nats"`
+}
+
+// NATSConfig configures JetStream messaging.
+type NATSConfig struct {
+	Enabled bool     `json:"enabled"`
+	URLs    []string `json:"urls"`
+	// SpoolDir holds the on-disk spool for events that could not be published
+	// (regional resilience). Default: ./spool
+	SpoolDir string `json:"spoolDir"`
+	// SpoolMaxBytes bounds the spool file (default 256 MiB).
+	SpoolMaxBytes int64 `json:"spoolMaxBytes"`
+}
+
+// APIConfig configures the HTTP API server.
+type APIConfig struct {
+	Enabled bool   `json:"enabled"`
+	Bind    string `json:"bind"`
+	// AdminToken guards the /api/admin routes (Bearer auth). Empty disables
+	// the admin routes while keeping the public API up.
+	AdminToken string `json:"adminToken"`
 }
 
 // LoggingConfig controls the root logger.
@@ -112,11 +142,29 @@ type PoolConfig struct {
 	// PoolFeePercent is subtracted from block rewards.
 	PoolFeePercent float64 `json:"poolFeePercent"`
 
+	// Address is the pool wallet address receiving coinbase rewards for this
+	// pool. Required for pools with a wired coin adapter.
+	Address string `json:"address"`
+	// CoinbaseTag is embedded in the coinbase scriptSig (e.g. "/ICMINERS/").
+	CoinbaseTag string `json:"coinbaseTag"`
+
 	// TemplatePollInterval controls how often the template poller runs (later
 	// stages). Kept here so the field is stable from the start.
 	TemplatePollInterval Duration `json:"templatePollInterval"`
 	// ErrorBackoff controls retry delay when a pool is in the error state.
 	ErrorBackoff Duration `json:"errorBackoff"`
+}
+
+// PostgresConfig configures persistence.
+type PostgresConfig struct {
+	Enabled bool   `json:"enabled"`
+	DSN     string `json:"dsn"`
+	// ShareQueueSize is the writer's buffered queue (default 65536).
+	ShareQueueSize int `json:"shareQueueSize"`
+	// ShareBatchSize triggers a flush at this many shares (default 500).
+	ShareBatchSize int `json:"shareBatchSize"`
+	// ShareFlushInterval flushes small batches at this cadence (default 2s).
+	ShareFlushInterval Duration `json:"shareFlushInterval"`
 }
 
 // CoinConfig describes a coin daemon.
@@ -128,6 +176,20 @@ type CoinConfig struct {
 	RPCURL      string `json:"rpcUrl"`
 	RPCUser     string `json:"rpcUser"`
 	RPCPassword string `json:"rpcPassword"`
+
+	// Network selects chain parameters where relevant: "mainnet" (default),
+	// "testnet", or "regtest".
+	Network string `json:"network"`
+}
+
+// CoinBySymbol returns the coin config with the given symbol (case-insensitive).
+func (c *Config) CoinBySymbol(symbol string) (CoinConfig, bool) {
+	for _, coin := range c.Coins {
+		if strings.EqualFold(coin.Symbol, symbol) {
+			return coin, true
+		}
+	}
+	return CoinConfig{}, false
 }
 
 // Load reads, parses, and validates a JSON config file, applying defaults.
@@ -246,6 +308,24 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("pool %q references unknown coin %q", p.ID, p.CoinSymbol)
 			}
 		}
+	}
+	if c.Postgres.Enabled && strings.TrimSpace(c.Postgres.DSN) == "" {
+		return fmt.Errorf("postgres.enabled requires postgres.dsn")
+	}
+	if c.API.Enabled && strings.TrimSpace(c.API.Bind) == "" {
+		return fmt.Errorf("api.enabled requires api.bind")
+	}
+	if c.NATS.Enabled && len(c.NATS.URLs) == 0 {
+		return fmt.Errorf("nats.enabled requires nats.urls")
+	}
+	if c.Mode == ModeMaster && !c.Postgres.Enabled {
+		return fmt.Errorf("master mode requires postgres (it persists consumed events)")
+	}
+	if c.Mode == ModeMaster && !c.NATS.Enabled {
+		return fmt.Errorf("master mode requires nats (it consumes regional events)")
+	}
+	if c.Mode == ModeRegional && !c.NATS.Enabled {
+		return fmt.Errorf("regional mode requires nats (it publishes events to the master)")
 	}
 	return nil
 }

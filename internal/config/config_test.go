@@ -26,13 +26,13 @@ const validConfig = `{
     "bindAddress": "0.0.0.0",
     "readTimeout": "5m",
     "ports": [
-      {"port": 3032, "poolId": "btc-shared", "difficulty": 1024},
-      {"port": 3033, "poolId": "btc-solo", "varDiff": true, "minDiff": 8, "maxDiff": 65536}
+      {"port": 3032, "poolId": "flowcoin-shared", "difficulty": 1024},
+      {"port": 3033, "poolId": "flowcoin-solo", "varDiff": true, "minDiff": 8, "maxDiff": 65536}
     ]
   },
   "pools": [
-    {"id": "btc-shared", "enabled": true, "paymentMode": "pplns", "initialState": "active"},
-    {"id": "btc-solo", "enabled": true, "paymentMode": "solo"}
+    {"id": "flowcoin-shared", "enabled": true, "paymentMode": "pplns", "initialState": "active"},
+    {"id": "flowcoin-solo", "enabled": true, "paymentMode": "solo"}
   ]
 }`
 
@@ -51,7 +51,7 @@ func TestLoadValid(t *testing.T) {
 		t.Errorf("readTimeout = %v", cfg.Stratum.ReadTimeout.D())
 	}
 	// Default initial state applied to the solo pool.
-	solo, ok := cfg.PoolByID("btc-solo")
+	solo, ok := cfg.PoolByID("flowcoin-solo")
 	if !ok || solo.InitialState != StateActive {
 		t.Errorf("expected default active initial state, got %q", solo.InitialState)
 	}

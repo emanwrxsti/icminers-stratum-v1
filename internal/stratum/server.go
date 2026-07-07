@@ -13,11 +13,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/icminers/gostratumpool/internal/config"
-	"github.com/icminers/gostratumpool/internal/logging"
-	"github.com/icminers/gostratumpool/internal/pool"
-	"github.com/icminers/gostratumpool/internal/stratum/protocol"
-	"github.com/icminers/gostratumpool/internal/stratum/session"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/config"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/jobs"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/logging"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/pool"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/stratum/protocol"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/stratum/session"
 )
 
 // Version is reported to miners via client.get_version.
@@ -42,8 +43,9 @@ type Server struct {
 }
 
 // NewServer builds a stratum server. nodePrefix seeds the extranonce1 allocator
-// so different nodes do not collide on shared coins.
-func NewServer(cfg config.StratumConfig, log *logging.Logger, lifecycle *pool.PoolLifecycleManager, nodePrefix []byte) *Server {
+// so different nodes do not collide on shared coins. registry supplies jobs
+// and receives shares; it may be nil (handshake-only server, used in tests).
+func NewServer(cfg config.StratumConfig, log *logging.Logger, lifecycle *pool.PoolLifecycleManager, nodePrefix []byte, registry *jobs.Registry) *Server {
 	l := logging.Component(log, "stratum")
 	sm := session.NewManager(cfg.MaxConnPerIP)
 	alloc := session.NewExtraNonce1Allocator(4, nodePrefix)
@@ -53,7 +55,40 @@ func NewServer(cfg config.StratumConfig, log *logging.Logger, lifecycle *pool.Po
 		sessions:  sm,
 		lifecycle: lifecycle,
 		alloc:     alloc,
-		handler:   NewHandler(l, lifecycle, alloc),
+		handler:   newHandlerForRegistry(l, lifecycle, alloc, registry),
+	}
+}
+
+// newHandlerForRegistry adapts the nil-ness of the registry: a nil *Registry
+// must become nil interfaces, not non-nil interfaces holding a nil pointer.
+func newHandlerForRegistry(l *logging.Logger, lifecycle *pool.PoolLifecycleManager, alloc *session.ExtraNonce1Allocator, registry *jobs.Registry) *Handler {
+	var js JobSource
+	var sink ShareSink
+	if registry != nil {
+		js = registry
+		sink = registry
+	}
+	return NewHandler(l, lifecycle, alloc, js, sink)
+}
+
+// BroadcastNotify implements jobs.Broadcaster: sends mining.notify to every
+// subscribed session on ONE pool. Write failures only drop that session's
+// connection state naturally on its next read; other pools are untouched.
+func (s *Server) BroadcastNotify(poolID string, params []any) {
+	n := &protocol.Notification{Method: protocol.MethodNotify, Params: params}
+	sent := 0
+	s.sessions.ForEachPool(poolID, func(sess *session.Session) {
+		if !sess.IsSubscribed() {
+			return
+		}
+		if err := sess.WriteNotification(n); err != nil {
+			s.log.Debug("notify write failed", "pool", poolID, "session", sess.ID, "err", err)
+			return
+		}
+		sent++
+	})
+	if sent > 0 {
+		s.log.Debug("job broadcast", "pool", poolID, "sessions", sent)
 	}
 }
 

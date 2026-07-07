@@ -3,14 +3,23 @@ package stratum
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
-	"github.com/icminers/gostratumpool/internal/logging"
-	"github.com/icminers/gostratumpool/internal/pool"
-	"github.com/icminers/gostratumpool/internal/stratum/protocol"
-	"github.com/icminers/gostratumpool/internal/stratum/session"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/jobs"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/logging"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/pool"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/stratum/protocol"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/stratum/session"
 )
+
+// JobSource supplies the current mining.notify parameters for a pool.
+// Implemented by the jobs registry; nil means no job wiring yet.
+type JobSource interface {
+	CurrentNotify(poolID string) ([]any, bool)
+}
 
 // Handler dispatches inbound JSON-RPC requests. It is stateless per request and
 // safe for concurrent use; all mutable state lives on the Session or the
@@ -19,11 +28,13 @@ type Handler struct {
 	log       *logging.Logger
 	lifecycle *pool.PoolLifecycleManager
 	alloc     *session.ExtraNonce1Allocator
+	jobSource JobSource
+	shareSink ShareSink
 }
 
-// NewHandler builds a handler.
-func NewHandler(log *logging.Logger, lifecycle *pool.PoolLifecycleManager, alloc *session.ExtraNonce1Allocator) *Handler {
-	return &Handler{log: logging.Component(log, "handler"), lifecycle: lifecycle, alloc: alloc}
+// NewHandler builds a handler. jobSource/shareSink may be nil (no jobs wired).
+func NewHandler(log *logging.Logger, lifecycle *pool.PoolLifecycleManager, alloc *session.ExtraNonce1Allocator, jobSource JobSource, shareSink ShareSink) *Handler {
+	return &Handler{log: logging.Component(log, "handler"), lifecycle: lifecycle, alloc: alloc, jobSource: jobSource, shareSink: shareSink}
 }
 
 // Handle processes one request. A returned error means the connection should be
@@ -40,7 +51,7 @@ func (h *Handler) Handle(ctx context.Context, sess *session.Session, req *protoc
 	case protocol.MethodGetVersion:
 		return sess.WriteResponse(protocol.OKResponse(req.ID, Version))
 	case protocol.MethodSubmit:
-		return h.handleSubmit(sess, req)
+		return h.handleSubmit(ctx, sess, req)
 	default:
 		return sess.WriteResponse(protocol.ErrResponse(req.ID,
 			protocol.NewError(protocol.ErrOther, "unknown method "+req.Method)))
@@ -113,8 +124,20 @@ func (h *Handler) handleAuthorize(sess *session.Session, req *protocol.Request) 
 	if err := sess.WriteResponse(protocol.OKResponse(req.ID, true)); err != nil {
 		return err
 	}
-	// Push the current (static, Stage 1) difficulty so miners can start hashing.
-	return h.sendSetDifficulty(sess, sess.Difficulty())
+	// Push the current difficulty, then the current job (if the pool has one)
+	// so the miner can start hashing immediately.
+	if err := h.sendSetDifficulty(sess, sess.Difficulty()); err != nil {
+		return err
+	}
+	if h.jobSource != nil {
+		if params, ok := h.jobSource.CurrentNotify(sess.PoolID); ok {
+			return sess.WriteNotification(&protocol.Notification{
+				Method: protocol.MethodNotify,
+				Params: params,
+			})
+		}
+	}
+	return nil
 }
 
 // handleConfigure implements a minimal mining.configure for version-rolling
@@ -140,15 +163,31 @@ func (h *Handler) handleConfigure(sess *session.Session, req *protocol.Request) 
 	return sess.WriteResponse(protocol.OKResponse(req.ID, result))
 }
 
-// handleSubmit is a placeholder until Stage 3. It validates the session is
-// authorized and returns a clear "not yet accepting shares" error rather than
-// silently dropping the submit, so miners get an honest signal.
-func (h *Handler) handleSubmit(sess *session.Session, req *protocol.Request) error {
-	if !sess.HasAnyAuthorized() {
+// ShareSink validates submitted shares. Implemented by the jobs registry.
+type ShareSink interface {
+	SubmitShare(ctx context.Context, poolID string, submit coins.ShareSubmit) (*coins.ShareResult, error)
+}
+
+// handleSubmit validates a share against the pool's remembered jobs.
+// Params: [workerName, jobId, extranonce2, ntime, nonce, (versionBits)].
+// The reply is computed entirely in memory; block submission and (Stage 4)
+// persistence happen off this path.
+func (h *Handler) handleSubmit(ctx context.Context, sess *session.Session, req *protocol.Request) error {
+	if !sess.IsSubscribed() {
 		return sess.WriteResponse(protocol.ErrResponse(req.ID,
-			protocol.NewError(protocol.ErrUnauthorized, "unauthorized")))
+			protocol.NewError(protocol.ErrNotSubscribed, "not subscribed")))
 	}
-	// Reject shares for pools not in a share-accepting state.
+	var params []string
+	if err := json.Unmarshal(req.Params, &params); err != nil || len(params) < 5 {
+		return sess.WriteResponse(protocol.ErrResponse(req.ID,
+			protocol.NewError(protocol.ErrOther, "invalid submit params")))
+	}
+	worker := strings.TrimSpace(params[0])
+	if !sess.IsAuthorized(worker) {
+		return sess.WriteResponse(protocol.ErrResponse(req.ID,
+			protocol.NewError(protocol.ErrUnauthorized, "worker not authorized")))
+	}
+	// Reject shares for pools not in a share-accepting state (active/draining).
 	state, err := h.lifecycle.GetPoolState(sess.PoolID)
 	if err != nil {
 		return sess.WriteResponse(protocol.ErrResponse(req.ID,
@@ -158,9 +197,43 @@ func (h *Handler) handleSubmit(sess *session.Session, req *protocol.Request) err
 		return sess.WriteResponse(protocol.ErrResponse(req.ID,
 			protocol.NewError(protocol.ErrOther, h.rejectMessage(sess.PoolID, state))))
 	}
-	// Share validation lands in Stage 3 (needs the job manager from Stage 2).
-	return sess.WriteResponse(protocol.ErrResponse(req.ID,
-		protocol.NewError(protocol.ErrJobNotFound, "share validation not enabled yet (stage 3)")))
+	if h.shareSink == nil {
+		return sess.WriteResponse(protocol.ErrResponse(req.ID,
+			protocol.NewError(protocol.ErrJobNotFound, "no job source wired for this pool")))
+	}
+
+	submit := coins.ShareSubmit{
+		Worker:      worker,
+		JobID:       params[1],
+		ExtraNonce2: params[2],
+		NTime:       params[3],
+		Nonce:       params[4],
+		ExtraNonce1: sess.ExtraNonce1(),
+		WorkerDiff:  sess.Difficulty(),
+		UserAgent:   sess.UserAgent(),
+		RemoteIP:    sess.RemoteIP,
+	}
+	if len(params) >= 6 {
+		submit.VersionBits = params[5]
+	}
+
+	result, err := h.shareSink.SubmitShare(ctx, sess.PoolID, submit)
+	if err != nil {
+		code := protocol.ErrOther
+		switch {
+		case errors.Is(err, jobs.ErrJobNotFound):
+			code = protocol.ErrJobNotFound
+		case errors.Is(err, jobs.ErrDuplicateShare):
+			code = protocol.ErrDuplicateShare
+		case errors.Is(err, jobs.ErrLowDifficulty):
+			code = protocol.ErrLowDifficulty
+		}
+		h.log.Debug("share rejected", "pool", sess.PoolID, "worker", worker, "err", err)
+		return sess.WriteResponse(protocol.ErrResponse(req.ID,
+			protocol.NewError(code, err.Error())))
+	}
+	_ = result // per-share stats persistence lands in Stage 4
+	return sess.WriteResponse(protocol.OKResponse(req.ID, true))
 }
 
 func (h *Handler) sendSetDifficulty(sess *session.Session, diff float64) error {

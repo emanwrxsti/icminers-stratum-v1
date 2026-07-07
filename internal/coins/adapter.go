@@ -53,6 +53,10 @@ type ShareSubmit struct {
 	VersionBits string // ASICBoost version rolling, may be empty
 	ExtraNonce1 string // assigned to the session at subscribe time
 	WorkerDiff  float64
+
+	// Connection metadata for persistence/stats (not used in validation).
+	UserAgent string
+	RemoteIP  string
 }
 
 // ShareResult is the outcome of validating a submitted share.

@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/icminers/gostratumpool/internal/stratum/protocol"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/stratum/protocol"
 )
 
 // Session is the server-side state for one miner TCP connection.
@@ -111,6 +111,13 @@ func (s *Session) Difficulty() float64 {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.difficulty
+}
+
+// UserAgent returns the miner's reported user agent.
+func (s *Session) UserAgent() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.userAgent
 }
 
 // SetUserAgent stores the miner's reported user agent.

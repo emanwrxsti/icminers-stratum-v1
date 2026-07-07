@@ -1,139 +1,87 @@
 {
   "mode": "all-in-one",
   "region": "us",
-  "nodeId": "us-dev-1",
-
+  "nodeId": "dev-1",
   "logging": {
-    "level": "info",
+    "level": "debug",
     "json": false
   },
-
   "stratum": {
     "bindAddress": "0.0.0.0",
-    "maxConnPerIp": 256,
+    "maxConnPerIp": 25,
     "readTimeout": "10m",
     "maxLineBytes": 65536,
     "ports": [
-      { "port": 3333, "poolId": "btc-shared", "difficulty": 1024 },
-      { "port": 3334, "poolId": "btc-solo", "varDiff": true, "minDiff": 16, "maxDiff": 4294967296 },
-      { "port": 3335, "poolId": "rxd-shared", "difficulty": 1024 },
-      { "port": 3336, "poolId": "rxd-solo", "varDiff": true, "minDiff": 16, "maxDiff": 4294967296 },
-      { "port": 3337, "poolId": "scash-shared", "difficulty": 1024 },
-      { "port": 3338, "poolId": "scash-solo", "varDiff": true, "minDiff": 16, "maxDiff": 4294967296 },
-      { "port": 3339, "poolId": "alph-shared", "difficulty": 1024 },
-      { "port": 3340, "poolId": "alph-solo", "varDiff": true, "minDiff": 16, "maxDiff": 4294967296 }
+      {
+        "port": 3032,
+        "poolId": "btc-solo",
+        "varDiff": false,
+        "difficulty": 16384
+      },
+      {
+        "port": 3033,
+        "poolId": "btc-shared",
+        "varDiff": true,
+        "difficulty": 1024,
+        "minDiff": 64,
+        "maxDiff": 1048576
+      }
     ]
   },
-
   "pools": [
     {
       "id": "btc-shared",
       "enabled": true,
       "coinSymbol": "BTC",
       "paymentMode": "pplns",
-      "initialState": "active",
       "poolFeePercent": 0.5,
-      "maintenanceMessage": "BTC shared pool is under maintenance. Please reconnect later.",
+      "address": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+      "coinbaseTag": "/ICMINERS/",
       "templatePollInterval": "500ms",
-      "errorBackoff": "15s"
+      "errorBackoff": "15s",
+      "maintenanceMessage": "BTC shared pool is under maintenance. Check icminers.com for status."
     },
     {
       "id": "btc-solo",
       "enabled": true,
       "coinSymbol": "BTC",
       "paymentMode": "solo",
-      "initialState": "active",
-      "poolFeePercent": 0.5,
-      "maintenanceMessage": "BTC solo pool is under maintenance. Please reconnect later."
-    },
-    {
-      "id": "rxd-shared",
-      "enabled": true,
-      "coinSymbol": "RXD",
-      "paymentMode": "pplns",
-      "initialState": "active",
-      "poolFeePercent": 0.5,
-      "maintenanceMessage": "Radiant shared pool is under maintenance. Please reconnect later."
-    },
-    {
-      "id": "rxd-solo",
-      "enabled": true,
-      "coinSymbol": "RXD",
-      "paymentMode": "solo",
-      "initialState": "active",
-      "poolFeePercent": 0.5,
-      "maintenanceMessage": "Radiant solo pool is under maintenance. Please reconnect later."
-    },
-    {
-      "id": "scash-shared",
-      "enabled": true,
-      "coinSymbol": "SCASH",
-      "paymentMode": "pplns",
-      "initialState": "active",
-      "poolFeePercent": 0.5,
-      "maintenanceMessage": "SCASH shared pool is under maintenance. Please reconnect later."
-    },
-    {
-      "id": "scash-solo",
-      "enabled": true,
-      "coinSymbol": "SCASH",
-      "paymentMode": "solo",
-      "initialState": "active",
-      "poolFeePercent": 0.5,
-      "maintenanceMessage": "SCASH solo pool is under maintenance. Please reconnect later."
-    },
-    {
-      "id": "alph-shared",
-      "enabled": true,
-      "coinSymbol": "ALPH",
-      "paymentMode": "pplns",
-      "initialState": "active",
-      "poolFeePercent": 0.5,
-      "maintenanceMessage": "Alephium shared pool is under maintenance. Please reconnect later."
-    },
-    {
-      "id": "alph-solo",
-      "enabled": true,
-      "coinSymbol": "ALPH",
-      "paymentMode": "solo",
-      "initialState": "active",
-      "poolFeePercent": 0.5,
-      "maintenanceMessage": "Alephium solo pool is under maintenance. Please reconnect later."
+      "poolFeePercent": 1.0,
+      "address": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+      "coinbaseTag": "/ICMINERS/",
+      "templatePollInterval": "500ms",
+      "errorBackoff": "15s"
     }
   ],
-
   "coins": [
     {
       "symbol": "BTC",
       "name": "Bitcoin",
       "algo": "sha256d",
+      "network": "mainnet",
       "rpcUrl": "http://127.0.0.1:8332",
-      "rpcUser": "rpcuser",
-      "rpcPassword": "rpcpassword"
-    },
-    {
-      "symbol": "RXD",
-      "name": "Radiant",
-      "algo": "sha512256d",
-      "rpcUrl": "http://127.0.0.1:17543",
-      "rpcUser": "rpcuser",
-      "rpcPassword": "rpcpassword"
-    },
-    {
-      "symbol": "SCASH",
-      "name": "SCASH",
-      "algo": "randomx",
-      "rpcUrl": "http://127.0.0.1:8645",
-      "rpcUser": "rpcuser",
-      "rpcPassword": "rpcpassword"
-    },
-    {
-      "symbol": "ALPH",
-      "name": "Alephium",
-      "algo": "alephium",
-      "rpcUrl": "http://127.0.0.1:12973",
-      "rpcUser": "rpcuser",
-      "rpcPassword": "rpcpassword"
+      "rpcUser": "CHANGE_ME",
+      "rpcPassword": "CHANGE_ME"
     }
-  ]
+  ],
+  "postgres": {
+    "enabled": false,
+    "dsn": "postgres://user:password@127.0.0.1:5432/gostratumpool",
+    "shareQueueSize": 65536,
+    "shareBatchSize": 500,
+    "shareFlushInterval": "2s"
+  },
+  "api": {
+    "enabled": true,
+    "bind": "127.0.0.1:4000",
+    "adminToken": "CHANGE_ME"
+  },
+  "nats": {
+    "enabled": false,
+    "urls": [
+      "nats://127.0.0.1:4222"
+    ],
+    "spoolDir": "spool",
+    "spoolMaxBytes": 268435456
+  }
 }

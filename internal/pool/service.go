@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/icminers/gostratumpool/internal/config"
-	"github.com/icminers/gostratumpool/internal/logging"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/config"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/logging"
 )
 
 // StateHook is notified whenever a pool changes state. The master uses this to
@@ -16,6 +16,14 @@ import (
 // Hooks must not block for long and must never panic the caller.
 type StateHook interface {
 	OnPoolStateChange(poolID string, from, to State, reason string)
+}
+
+// Poller is the per-pool work body invoked on every template-poll tick while
+// the pool's state allows polling. Implemented by the job manager (Stage 2+).
+// A returned error moves ONLY this pool into the error state; the supervisor
+// backs off and retries. Implementations must never call os.Exit.
+type Poller interface {
+	Poll(ctx context.Context) error
 }
 
 // Service is a single pool/coin running in isolation. It owns its own context,
@@ -41,6 +49,9 @@ type Service struct {
 
 	// drainTimer transitions draining -> maintenance after the grace period.
 	drainTimer *time.Timer
+
+	// poller is the pool's work body (job manager). Nil pollers idle.
+	poller Poller
 }
 
 // newService builds a Service in its configured initial state without starting
@@ -58,6 +69,13 @@ func newService(cfg config.PoolConfig, log *logging.Logger, hook StateHook) *Ser
 		maintenanceMessage: cfg.MaintenanceMessage,
 		stateChangedAt:     time.Now(),
 	}
+}
+
+// SetPoller wires the pool's work body. Must be called before Start.
+func (s *Service) SetPoller(p Poller) {
+	s.mu.Lock()
+	s.poller = p
+	s.mu.Unlock()
 }
 
 // State returns the current lifecycle state.
@@ -112,24 +130,13 @@ func (s *Service) setState(to State, reason string) error {
 // start launches the pool's supervised loop under the parent context. It is a
 // no-op if the pool is disabled.
 func (s *Service) start(parent context.Context) {
-	s.mu.Lock()
-	if s.state == StateDisabled {
-		s.mu.Unlock()
+	if s.State() == StateDisabled {
 		s.log.Info("pool is disabled; not starting loop")
 		return
 	}
-	// Do not accidentally launch two supervised loops for the same pool.
-	if s.loopCtx != nil && s.loopCtx.Err() == nil {
-		s.mu.Unlock()
-		return
-	}
-	ctx, cancel := context.WithCancel(parent)
-	s.loopCtx = ctx
-	s.loopCancel = cancel
+	s.loopCtx, s.loopCancel = context.WithCancel(parent)
 	s.loopWG.Add(1)
-	s.mu.Unlock()
-
-	go s.superviseLoop(ctx)
+	go s.superviseLoop()
 }
 
 // stop cancels the loop and waits for it to exit.
@@ -145,17 +152,12 @@ func (s *Service) stop() {
 		cancel()
 	}
 	s.loopWG.Wait()
-
-	s.mu.Lock()
-	s.loopCtx = nil
-	s.loopCancel = nil
-	s.mu.Unlock()
 }
 
 // superviseLoop runs the pool's work loop and restarts it on panic, moving the
 // pool into the error state and backing off. This is the guarantee that one
 // coin's bug cannot crash the whole stratum.
-func (s *Service) superviseLoop(ctx context.Context) {
+func (s *Service) superviseLoop() {
 	defer s.loopWG.Done()
 	backoff := s.cfg.ErrorBackoff.D()
 	if backoff <= 0 {
@@ -163,18 +165,18 @@ func (s *Service) superviseLoop(ctx context.Context) {
 	}
 
 	for {
-		if ctx.Err() != nil {
+		if s.loopCtx.Err() != nil {
 			return
 		}
-		err := s.runOnce(ctx)
-		if ctx.Err() != nil {
+		err := s.runOnce(s.loopCtx)
+		if s.loopCtx.Err() != nil {
 			return
 		}
 		if err != nil {
 			_ = s.setState(StateError, err.Error())
 			s.log.Warn("pool loop errored; backing off", "err", err, "backoff", backoff)
 			select {
-			case <-ctx.Done():
+			case <-s.loopCtx.Done():
 				return
 			case <-time.After(backoff):
 			}
@@ -214,16 +216,25 @@ func (s *Service) runOnce(ctx context.Context) (err error) {
 			// states keep the loop alive but idle so operators can resume
 			// without restarting the goroutine.
 			if s.State().RunsTemplatePolling() {
-				s.pollOnce(ctx)
+				if err := s.pollOnce(ctx); err != nil {
+					return err
+				}
 			}
 		}
 	}
 }
 
-// pollOnce is where Stage 2 will call adapter.GetBlockTemplate and publish jobs.
-// Kept as a seam so the supervision/recovery machinery is testable today.
-func (s *Service) pollOnce(_ context.Context) {
-	// Stage 1: no daemon yet. Intentionally empty.
+// pollOnce invokes the pool's poller (the job manager). Pools without a
+// poller idle; a poller error propagates so the supervisor moves this pool
+// (only) into the error state and backs off.
+func (s *Service) pollOnce(ctx context.Context) error {
+	s.mu.RLock()
+	p := s.poller
+	s.mu.RUnlock()
+	if p == nil {
+		return nil
+	}
+	return p.Poll(ctx)
 }
 
 // beginDrain moves the pool to draining and schedules the transition to

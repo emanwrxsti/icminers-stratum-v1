@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/icminers/gostratumpool/internal/config"
-	"github.com/icminers/gostratumpool/internal/logging"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/config"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/logging"
 )
 
 // ErrUnknownPool is returned for operations on a pool id that is not loaded.
@@ -93,6 +93,16 @@ func (m *PoolLifecycleManager) get(poolID string) (*Service, error) {
 
 // StartPool starts (or re-starts into active) a pool's loop. Used to bring a
 // disabled pool online.
+// SetPoller wires a pool's work body (the job manager). Call before Start.
+func (m *PoolLifecycleManager) SetPoller(poolID string, p Poller) error {
+	svc, err := m.get(poolID)
+	if err != nil {
+		return err
+	}
+	svc.SetPoller(p)
+	return nil
+}
+
 func (m *PoolLifecycleManager) StartPool(poolID string) error {
 	s, err := m.get(poolID)
 	if err != nil {

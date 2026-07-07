@@ -2,7 +2,7 @@
 
 Coins are added by implementing the `coins.CoinAdapter` interface. The stratum
 core never contains coin-specific logic, so a new chain touches only its own
-adapter package plus config. The initial target coins are BTC, RXD, SCASH, and ALPH; do not add extra coins until those adapters are stable.
+adapter package plus config.
 
 ## 1. Create the adapter package
 
@@ -12,8 +12,8 @@ Add `internal/coins/<yourcoin>/adapter.go` with a type that satisfies
 ```go
 type Adapter struct { /* rpc client, algo, network params */ }
 
-func (a *Adapter) Name() string   { return "Bitcoin" }
-func (a *Adapter) Symbol() string { return "BTC" }
+func (a *Adapter) Name() string   { return "YourCoin" }
+func (a *Adapter) Symbol() string { return "YRC" }
 func (a *Adapter) Algo() string   { return "sha256d" }
 
 func (a *Adapter) GetBlockTemplate(ctx context.Context) (*coins.BlockTemplate, error) { ... }
@@ -40,13 +40,13 @@ func (a *Adapter) NormalizeAddress(address string) (string, error) { ... }
 ```json
 {
   "coins": [
-    { "symbol": "BTC", "name": "Bitcoin", "algo": "sha256d",
-      "rpcUrl": "http://127.0.0.1:8332", "rpcUser": "u", "rpcPassword": "p" }
+    { "symbol": "YRC", "name": "YourCoin", "algo": "sha256d",
+      "rpcUrl": "http://127.0.0.1:PORT", "rpcUser": "u", "rpcPassword": "p" }
   ],
   "pools": [
-    { "id": "btc-shared", "enabled": true, "coinSymbol": "BTC", "paymentMode": "pplns" }
+    { "id": "yourcoin-shared", "enabled": true, "coinSymbol": "YRC", "paymentMode": "pplns" }
   ],
-  "stratum": { "ports": [ { "port": 3040, "poolId": "btc-shared", "difficulty": 1024 } ] }
+  "stratum": { "ports": [ { "port": 3040, "poolId": "yourcoin-shared", "difficulty": 1024 } ] }
 }
 ```
 

@@ -203,6 +203,7 @@ func (a *Adapter) BuildMiningJob(ctx context.Context, tpl *coins.BlockTemplate, 
 		JobID:         "",
 		Height:        base.Height,
 		NetworkTarget: bitcoinbase.TargetToBytes(target),
+		CoinbaseValue: base.CoinbaseValue,
 		NotifyParams:  nil, // stamped by the job manager together with JobID
 		Raw:           map[string]any{"bitcoinbase": job},
 	}, nil

@@ -32,7 +32,9 @@ type BlockEvent struct {
 	Miner             string
 	Worker            string
 	Hash              string
-	Created           time.Time
+	// RewardSats is the exact coinbase value (base units) this block pays.
+	RewardSats int64
+	Created    time.Time
 }
 
 // Recorder receives share/block events off the validation path. Implementations
@@ -98,6 +100,7 @@ func (m *Manager) record(job *coins.MiningJob, submit coins.ShareSubmit, result 
 			Miner:             miner,
 			Worker:            worker,
 			Hash:              result.BlockHash,
+			RewardSats:        job.CoinbaseValue,
 			Created:           now,
 		})
 	}

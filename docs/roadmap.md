@@ -182,10 +182,46 @@ is the correct shape for all-in-one and regional deployments today.
 standalone command-authority API (it needs no stratum ports). A separate
 binary would duplicate the same wiring.
 
-## Stage 7 — rewards
+## Stage 7 — DONE: rewards (`rewardd`)
 
-- [ ] `cmd/rewardd`, `internal/rewards/{pplns,prop,solo}`.
-- [ ] Credit balances only after block maturity; handle orphans.
+- [x] Exact-integer accounting end to end: the template's `coinbasevalue`
+      (base units / satoshis) travels on the mining job → block event → NATS →
+      `blocks.reward_sats`. No floating-point money anywhere; a regression
+      test pins the plumbing.
+- [x] `internal/rewards`: pure calculators over an abstract `ShareSource` —
+      SOLO (full reward to the finder), PROP (per-round shares since the
+      previous block), PPLNS (backward window of `factor × network
+      difficulty`, classic semantics, proportional to counted work, graceful
+      under-filled window for young pools). `distribute` floors per miner and
+      hands remainder satoshis to the largest contributors: credits sum
+      EXACTLY to the distributable amount, proven across amount/split
+      matrices. Pool fee is floored in the miners' favor and recorded as a
+      `pool-fee` audit row.
+- [x] Confirmation tracking (`ChainView` over getblockcount/getblockhash):
+      confirmations + progress toward `maturityDepth` (default 100), orphan
+      declaration only once the chain is `orphanDepth` (default 12) past a
+      mismatched height — shallow mismatches stay pending for reorg-back.
+      Orphans get status `orphaned` and zero reward.
+- [x] Migration 003: `blocks.{reward_sats,rewarded,confirmations}`,
+      `balances` (poolid+miner, `amount_sats`), `balance_changes` audit trail.
+- [x] Atomic crediting: one transaction with a `FOR UPDATE` lock on the block
+      row and an in-transaction `rewarded` re-check — reprocessing can never
+      double-credit (integration-tested).
+- [x] `cmd/rewardd`: standalone daemon, one panic-isolated processor per pool
+      (interval per pool via `rewardInterval`), `-once` for single passes,
+      systemd unit in `deploy/`. Runs wherever the database lives.
+- [x] Tests: fee math, distribution exactness, all three calculators
+      (window/round boundaries, first-block, under-filled PPLNS), confirmation
+      state machine, full processor pass over fakes, postgres integration for
+      the share-source queries and atomic/idempotent crediting.
+- [x] Live smoke: mined a real block through stratumd, ran `rewardd -once`
+      against a confirming daemon — block confirmed at maturity, PPLNS
+      credited 309,375,000 sats to the miner + 3,125,000 sats pool fee
+      (= exactly the 312,500,000-sat coinbase), and a second run changed
+      nothing.
+
+Payouts (moving balances on-chain) belong to a future `payoutd`; Stage 8 is
+hardening.
 
 ## Stage 8 — hardening
 

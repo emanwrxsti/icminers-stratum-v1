@@ -35,6 +35,9 @@ type MiningJob struct {
 	CleanJobs bool
 	// NetworkTarget is the big-endian network target the block must beat.
 	NetworkTarget []byte
+	// CoinbaseValue is the block reward in base units (satoshis) from the
+	// template; exact integer accounting for Stage 7 rewards.
+	CoinbaseValue int64
 	// NotifyParams is the exact positional parameter array for mining.notify,
 	// built by the adapter so coin-specific fields stay out of the core.
 	NotifyParams []any

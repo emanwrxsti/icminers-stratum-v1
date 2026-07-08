@@ -33,8 +33,10 @@ type BlockRecord struct {
 	Miner             string
 	Worker            string
 	Hash              string
-	Source            string
-	Created           time.Time
+	// RewardSats is the exact coinbase value in base units.
+	RewardSats int64
+	Source     string
+	Created    time.Time
 }
 
 // WriterOptions tune the async share writer.
@@ -242,9 +244,9 @@ func (w *ShareWriter) copySharesCtx(ctx context.Context, recs []ShareRecord) err
 func (s *Store) InsertBlock(ctx context.Context, b BlockRecord) error {
 	_, err := s.Pool.Exec(ctx, `
 		INSERT INTO blocks
-			(poolid, blockheight, networkdifficulty, status, miner, worker, hash, source, created)
-		VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7, $8)
+			(poolid, blockheight, networkdifficulty, status, miner, worker, hash, reward_sats, source, created)
+		VALUES ($1, $2, $3, 'pending', $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (poolid, blockheight, hash) DO NOTHING`,
-		b.PoolID, b.BlockHeight, b.NetworkDifficulty, b.Miner, b.Worker, b.Hash, b.Source, b.Created)
+		b.PoolID, b.BlockHeight, b.NetworkDifficulty, b.Miner, b.Worker, b.Hash, b.RewardSats, b.Source, b.Created)
 	return err
 }

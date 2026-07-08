@@ -1,0 +1,24 @@
+[Unit]
+Description=GoStratumPool reward daemon (block confirmation + balance crediting)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gostratum
+Group=gostratum
+WorkingDirectory=/opt/gostratum
+ExecStart=/opt/gostratum/bin/rewardd -config /opt/gostratum/configs/config.json
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGTERM
+TimeoutStopSec=30s
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/gostratum
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

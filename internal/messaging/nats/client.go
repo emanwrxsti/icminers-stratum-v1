@@ -84,6 +84,7 @@ type BlockEventMsg struct {
 	Miner             string    `json:"miner"`
 	Worker            string    `json:"worker"`
 	Hash              string    `json:"hash"`
+	RewardSats        int64     `json:"rewardSats"`
 	Created           time.Time `json:"created"`
 }
 

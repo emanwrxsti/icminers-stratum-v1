@@ -145,6 +145,12 @@ type PoolConfig struct {
 	// Address is the pool wallet address receiving coinbase rewards for this
 	// pool. Required for pools with a wired coin adapter.
 	Address string `json:"address"`
+
+	// PPLNSFactor sizes the PPLNS window: N = factor x network difficulty
+	// (default 2.0). Only used when paymentMode is "pplns".
+	PPLNSFactor float64 `json:"pplnsFactor"`
+	// RewardInterval is rewardd's per-pool processing cadence (default 30s).
+	RewardInterval Duration `json:"rewardInterval"`
 	// CoinbaseTag is embedded in the coinbase scriptSig (e.g. "/ICMINERS/").
 	CoinbaseTag string `json:"coinbaseTag"`
 
@@ -180,6 +186,13 @@ type CoinConfig struct {
 	// Network selects chain parameters where relevant: "mainnet" (default),
 	// "testnet", or "regtest".
 	Network string `json:"network"`
+
+	// MaturityDepth is the confirmations required before a coinbase is
+	// spendable and rewards are credited (Bitcoin: 100).
+	MaturityDepth int64 `json:"maturityDepth"`
+	// OrphanDepth: a block absent from the best chain is declared orphaned
+	// once the chain is this far past its height (default 12).
+	OrphanDepth int64 `json:"orphanDepth"`
 }
 
 // CoinBySymbol returns the coin config with the given symbol (case-insensitive).
@@ -212,6 +225,22 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) applyDefaults() {
+	for i := range c.Pools {
+		if c.Pools[i].PPLNSFactor <= 0 {
+			c.Pools[i].PPLNSFactor = 2.0
+		}
+		if c.Pools[i].RewardInterval <= 0 {
+			c.Pools[i].RewardInterval = Duration(30 * time.Second)
+		}
+	}
+	for i := range c.Coins {
+		if c.Coins[i].MaturityDepth <= 0 {
+			c.Coins[i].MaturityDepth = 100
+		}
+		if c.Coins[i].OrphanDepth <= 0 {
+			c.Coins[i].OrphanDepth = 12
+		}
+	}
 	if c.Mode == "" {
 		c.Mode = ModeAllInOne
 	}

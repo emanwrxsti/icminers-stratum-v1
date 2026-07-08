@@ -5,7 +5,7 @@ supervisor**: every coin/pool runs as an isolated service with its own lifecycle
 context, and goroutines, so maintaining, restarting, or breaking one coin never
 affects any other pool or the global stratum server.
 
-This repository is being built in clean stages. **Stages 1–6 are complete and
+This repository is being built in clean stages. **Stages 1–7 are complete and
 this is the current milestone**: a compiling, tested, zero-dependency BTC pool
 core. Miners subscribe/authorize, receive real Bitcoin Core
 `getblocktemplate`-derived `mining.notify` jobs (coinbase split, merkle
@@ -22,8 +22,11 @@ and token-guarded per-pool admin lifecycle control
 nodes publish shares, blocks, and pool-state over NATS JetStream (with a
 bounded disk spool that survives full NATS outages), the master consumes them
 into PostgreSQL, and the master's admin API issues per-pool lifecycle commands
-that every regional follows. The remaining stages add the PPLNS/PROP/SOLO
-reward calculators and hardening (vardiff controller, banning, metrics). RXD, SCASH, and ALPH
+that every regional follows. `rewardd` confirms found blocks against the daemon
+(maturity + orphan handling) and credits miner balances by the pool's payment
+scheme — PPLNS, PROP, or SOLO — with exact integer satoshi accounting and an
+auditable `balance_changes` trail. The remaining stage is hardening (vardiff
+controller, banning, metrics). RXD, SCASH, and ALPH
 are intentionally not implemented yet. See [docs/roadmap.md](docs/roadmap.md)
 for exactly what is done and what is pending. CI runs gofmt/vet/test/race/build
 on every push (`.github/workflows/go.yml`).

@@ -39,7 +39,9 @@
       "coinbaseTag": "/ICMINERS/",
       "templatePollInterval": "500ms",
       "errorBackoff": "15s",
-      "maintenanceMessage": "BTC shared pool is under maintenance. Check icminers.com for status."
+      "maintenanceMessage": "BTC shared pool is under maintenance. Check icminers.com for status.",
+      "pplnsFactor": 2.0,
+      "rewardInterval": "30s"
     },
     {
       "id": "btc-solo",
@@ -50,7 +52,8 @@
       "address": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
       "coinbaseTag": "/ICMINERS/",
       "templatePollInterval": "500ms",
-      "errorBackoff": "15s"
+      "errorBackoff": "15s",
+      "rewardInterval": "30s"
     }
   ],
   "coins": [
@@ -61,7 +64,9 @@
       "network": "mainnet",
       "rpcUrl": "http://127.0.0.1:8332",
       "rpcUser": "CHANGE_ME",
-      "rpcPassword": "CHANGE_ME"
+      "rpcPassword": "CHANGE_ME",
+      "maturityDepth": 100,
+      "orphanDepth": 12
     }
   ],
   "postgres": {

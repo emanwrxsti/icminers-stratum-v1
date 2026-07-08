@@ -78,6 +78,7 @@ func (s *natsSink) SinkBlock(ev natsmsg.BlockEventMsg) {
 		Miner:             ev.Miner,
 		Worker:            ev.Worker,
 		Hash:              ev.Hash,
+		RewardSats:        ev.RewardSats,
 		Source:            ev.Region,
 		Created:           ev.Created,
 	}); err != nil {
@@ -127,6 +128,7 @@ func (r *storageRecorder) RecordBlock(ev jobs.BlockEvent) {
 			Miner:             ev.Miner,
 			Worker:            ev.Worker,
 			Hash:              ev.Hash,
+			RewardSats:        ev.RewardSats,
 			Source:            r.region,
 			Created:           ev.Created,
 		}); err != nil {

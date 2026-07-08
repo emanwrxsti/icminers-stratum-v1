@@ -281,3 +281,62 @@ func TestDupCacheEvictedWithJob(t *testing.T) {
 		t.Fatal("dup cache for evicted job not released")
 	}
 }
+
+// captureRecorder asserts recorder events carry exact reward plumbing.
+type captureRecorder struct {
+	mu     sync.Mutex
+	shares []ShareEvent
+	blocks []BlockEvent
+}
+
+func (c *captureRecorder) RecordShare(ev ShareEvent) {
+	c.mu.Lock()
+	c.shares = append(c.shares, ev)
+	c.mu.Unlock()
+}
+func (c *captureRecorder) RecordBlock(ev BlockEvent) {
+	c.mu.Lock()
+	c.blocks = append(c.blocks, ev)
+	c.mu.Unlock()
+}
+
+// TestBlockEventCarriesExactReward is a regression test: the template's
+// coinbasevalue (312500000 sats in the fake daemon) must arrive on the
+// BlockEvent unchanged — this is the value Stage 7 credits from.
+func TestBlockEventCarriesExactReward(t *testing.T) {
+	f := &fakeSubmitDaemon{template: easyBaseTemplate()}
+	srv := f.server()
+	defer srv.Close()
+	m := newTestManager(t, srv.URL)
+	rec := &captureRecorder{}
+	m.SetRecorder(rec)
+	ctx := context.Background()
+	if err := m.Poll(ctx); err != nil {
+		t.Fatal(err)
+	}
+	jobID := currentJobID(t, m)
+	en1 := []byte{0, 0, 0, 1}
+	en2 := []byte{0, 0, 0, 5}
+	nonce, ntime := mineForJob(t, m, jobID, en1, en2, 1e-9)
+	if _, err := m.SubmitShare(ctx, coins.ShareSubmit{
+		Worker: "bc1qaddr.rig1", JobID: jobID,
+		ExtraNonce1: hex.EncodeToString(en1), ExtraNonce2: hex.EncodeToString(en2),
+		NTime: ntime, Nonce: nonce, WorkerDiff: 1e-9,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.blocks) != 1 {
+		t.Fatalf("block events = %d", len(rec.blocks))
+	}
+	if rec.blocks[0].RewardSats != 312500000 {
+		t.Fatalf("RewardSats = %d, want 312500000", rec.blocks[0].RewardSats)
+	}
+	if rec.blocks[0].Miner != "bc1qaddr" || rec.blocks[0].Worker != "rig1" {
+		t.Fatalf("miner/worker split = %q/%q", rec.blocks[0].Miner, rec.blocks[0].Worker)
+	}
+	if len(rec.shares) != 1 || !rec.shares[0].IsBlockCandidate {
+		t.Fatalf("share events = %+v", rec.shares)
+	}
+}

@@ -97,6 +97,29 @@ var migrations = []string{
 		ON blocks (poolid, blockheight, hash)`,
 	`CREATE INDEX IF NOT EXISTS idx_blocks_pool_status
 		ON blocks (poolid, status)`,
+	// 003: Stage 7 rewards — exact-integer accounting in base units (sats).
+	`ALTER TABLE blocks
+		ADD COLUMN IF NOT EXISTS reward_sats bigint NOT NULL DEFAULT 0,
+		ADD COLUMN IF NOT EXISTS rewarded boolean NOT NULL DEFAULT false,
+		ADD COLUMN IF NOT EXISTS confirmations bigint NOT NULL DEFAULT 0`,
+	`CREATE TABLE IF NOT EXISTS balances (
+		poolid      text   NOT NULL,
+		miner       text   NOT NULL,
+		amount_sats bigint NOT NULL DEFAULT 0,
+		updated     timestamptz NOT NULL DEFAULT now(),
+		PRIMARY KEY (poolid, miner)
+	)`,
+	`CREATE TABLE IF NOT EXISTS balance_changes (
+		id          bigserial PRIMARY KEY,
+		poolid      text   NOT NULL,
+		miner       text   NOT NULL,
+		amount_sats bigint NOT NULL,
+		usage       text   NOT NULL DEFAULT '',
+		blockheight bigint NOT NULL DEFAULT 0,
+		created     timestamptz NOT NULL DEFAULT now()
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_balance_changes_pool_miner
+		ON balance_changes (poolid, miner, created)`,
 }
 
 // applyMigrations records progress in schema_migrations and only runs pending

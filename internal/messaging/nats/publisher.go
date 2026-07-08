@@ -100,6 +100,7 @@ func (p *Publisher) RecordBlock(ev jobs.BlockEvent) {
 		Miner:             ev.Miner,
 		Worker:            ev.Worker,
 		Hash:              ev.Hash,
+		RewardSats:        ev.RewardSats,
 		Created:           ev.Created,
 	}
 	payload, err := json.Marshal(msg)

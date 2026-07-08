@@ -28,7 +28,7 @@ func testStore(t *testing.T) *Store {
 	t.Cleanup(func() {
 		// Isolate runs: drop everything this suite creates.
 		_, _ = s.Pool.Exec(context.Background(),
-			`DROP TABLE IF EXISTS shares, blocks, schema_migrations CASCADE`)
+			`DROP TABLE IF EXISTS shares, blocks, balances, balance_changes, schema_migrations CASCADE`)
 		s.Close()
 	})
 	return s

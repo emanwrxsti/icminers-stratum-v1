@@ -23,14 +23,20 @@ type Session struct {
 	conn   net.Conn
 	writer *protocol.Writer
 
-	mu           sync.RWMutex
-	subscribed   bool
-	extraNonce1  string
-	difficulty   float64
-	authWorkers  map[string]bool
-	userAgent    string
-	connectedAt  time.Time
-	lastActivity time.Time
+	mu             sync.RWMutex
+	subscribed     bool
+	extraNonce1    string
+	difficulty     float64
+	prevDifficulty float64
+	diffChangedAt  time.Time
+	authWorkers    map[string]bool
+	userAgent      string
+	connectedAt    time.Time
+	lastActivity   time.Time
+
+	// Vardiff is the per-session difficulty controller (nil on fixed-diff
+	// ports). Set once at accept time; the controller is internally locked.
+	Vardiff any
 
 	// writeMu serializes writes so notifications and responses never interleave
 	// on the wire.
@@ -97,6 +103,30 @@ func (s *Session) HasAnyAuthorized() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.authWorkers) > 0
+}
+
+// UpdateDifficulty applies a vardiff retarget: the previous difficulty is
+// kept (with its change time) so shares mined against the old target during
+// propagation are still honored within a grace window.
+func (s *Session) UpdateDifficulty(d float64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.prevDifficulty = s.difficulty
+	s.diffChangedAt = time.Now()
+	s.difficulty = d
+}
+
+// EffectiveDifficulty returns the difficulty a submit should be validated and
+// credited at: normally the current difficulty, but within graceWindow of a
+// RAISE the lower previous difficulty still applies (in-flight work).
+func (s *Session) EffectiveDifficulty(graceWindow time.Duration) float64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.prevDifficulty > 0 && s.prevDifficulty < s.difficulty &&
+		time.Since(s.diffChangedAt) < graceWindow {
+		return s.prevDifficulty
+	}
+	return s.difficulty
 }
 
 // SetDifficulty records the session's current difficulty.

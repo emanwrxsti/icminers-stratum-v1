@@ -19,6 +19,7 @@ import (
 
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/config"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/logging"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/metrics"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/pool"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/stats"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/storage/postgres"
@@ -35,6 +36,9 @@ type Options struct {
 	Store *postgres.Store
 	// SessionCount reports live stratum connections (may be nil).
 	SessionCount func() int
+	// Metrics, when set, serves the Prometheus text format at /metrics.
+	Metrics *metrics.Registry
+
 	// AdminToken guards /api/admin; empty disables admin routes entirely.
 	AdminToken string
 
@@ -93,6 +97,12 @@ func (s *Server) Start(ctx context.Context, bind string) error {
 func (s *Server) routes() {
 	// Public.
 	s.mux.HandleFunc("GET /api/health", s.handleHealth)
+	if s.opts.Metrics != nil {
+		s.mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+			s.opts.Metrics.Render(w)
+		})
+	}
 	s.mux.HandleFunc("GET /api/pools", s.handlePools)
 	s.mux.HandleFunc("GET /api/pools/{id}", s.handlePool)
 	s.mux.HandleFunc("GET /api/pools/{id}/blocks", s.handlePoolBlocks)
@@ -143,12 +153,19 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	if s.opts.SessionCount != nil {
 		sessions = s.opts.SessionCount()
 	}
+	states := map[string]string{}
+	for _, p := range s.opts.Config.Pools {
+		if st, err := s.opts.Lifecycle.GetPoolState(p.ID); err == nil {
+			states[p.ID] = string(st)
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"status":        "ok",
 		"uptimeSeconds": int(time.Since(s.started).Seconds()),
 		"region":        s.opts.Config.Region,
 		"nodeId":        s.opts.Config.NodeID,
 		"pools":         len(s.opts.Config.Pools),
+		"poolStates":    states,
 		"sessions":      sessions,
 		"database":      s.opts.Store != nil,
 	})

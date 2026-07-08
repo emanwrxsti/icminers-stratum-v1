@@ -16,12 +16,14 @@ import (
 	"time"
 
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/api"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/bans"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/btc"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/rpc"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/config"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/jobs"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/logging"
 	natsmsg "github.com/emanwrxsti/icminers-stratum-v1/internal/messaging/nats"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/metrics"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/pool"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/spool"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/stats"
@@ -288,6 +290,48 @@ func main() {
 
 	prefix := nodePrefix(cfg.NodeID)
 	srv := stratum.NewServer(cfg.Stratum, log, lifecycle, prefix, registry)
+
+	// Stage 8: metrics registry + per-IP banning.
+	reg := metrics.NewRegistry()
+	banMgr := bans.NewManager(bans.Config{
+		Enabled:             cfg.Banning.Enabled,
+		InvalidPercent:      cfg.Banning.InvalidPercent,
+		CheckThreshold:      cfg.Banning.CheckThreshold,
+		MalformedThreshold:  cfg.Banning.MalformedThreshold,
+		FailedAuthThreshold: cfg.Banning.FailedAuthThreshold,
+		BanDuration:         time.Duration(cfg.Banning.BanDuration),
+	}, log)
+	srv.SetBanManager(banMgr)
+	srv.SetHandlerCounters(&stratum.HandlerCounters{
+		ShareAccepted: func(poolID string) {
+			reg.Counter("pool_shares_total", "Shares by outcome.",
+				map[string]string{"pool": poolID, "result": "accepted"}).Inc()
+		},
+		ShareRejected: func(poolID string) {
+			reg.Counter("pool_shares_total", "Shares by outcome.",
+				map[string]string{"pool": poolID, "result": "rejected"}).Inc()
+		},
+		BlockFound: func(poolID string) {
+			reg.Counter("pool_blocks_found_total", "Block candidates found.",
+				map[string]string{"pool": poolID}).Inc()
+		},
+	})
+	reg.Gauge("stratum_sessions", "Live miner connections.", nil,
+		func() float64 { return float64(srv.SessionCount()) })
+	reg.Gauge("bans_active", "Currently banned IPs.", nil,
+		func() float64 { return float64(banMgr.BannedCount()) })
+	if natsSpool != nil {
+		sp := natsSpool
+		reg.Gauge("spool_bytes", "Bytes waiting in the NATS spool.", nil,
+			func() float64 { return float64(sp.Len()) })
+	}
+	if writer != nil {
+		wr := writer
+		reg.Gauge("sharewriter_written_total", "Shares persisted by the async writer.", nil,
+			func() float64 { w, _ := wr.Stats(); return float64(w) })
+		reg.Gauge("sharewriter_dropped_total", "Shares dropped by the async writer.", nil,
+			func() float64 { _, d := wr.Stats(); return float64(d) })
+	}
 	// The server fans mining.notify out to sessions; give it to job managers.
 	registry.SetBroadcaster(srv)
 
@@ -310,6 +354,7 @@ func main() {
 			Stats:          collector,
 			Store:          store,
 			SessionCount:   srv.SessionCount,
+			Metrics:        reg,
 			AdminToken:     cfg.API.AdminToken,
 			PublishCommand: publishCmd,
 			Log:            log,

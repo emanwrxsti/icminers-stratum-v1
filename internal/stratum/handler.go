@@ -6,14 +6,21 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/bans"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/jobs"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/logging"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/pool"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/stratum/protocol"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/stratum/session"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/stratum/vardiff"
 )
+
+// diffGraceWindow: after a vardiff RAISE, shares mined against the previous
+// (lower) difficulty are still honored for this long.
+const diffGraceWindow = 8 * time.Second
 
 // JobSource supplies the current mining.notify parameters for a pool.
 // Implemented by the jobs registry; nil means no job wiring yet.
@@ -30,6 +37,17 @@ type Handler struct {
 	alloc     *session.ExtraNonce1Allocator
 	jobSource JobSource
 	shareSink ShareSink
+	bans      *bans.Manager
+
+	// Counters is an optional metrics hook (set by main).
+	Counters *HandlerCounters
+}
+
+// HandlerCounters are optional share-outcome hooks for metrics.
+type HandlerCounters struct {
+	ShareAccepted func(poolID string)
+	ShareRejected func(poolID string)
+	BlockFound    func(poolID string)
 }
 
 // NewHandler builds a handler. jobSource/shareSink may be nil (no jobs wired).
@@ -209,7 +227,7 @@ func (h *Handler) handleSubmit(ctx context.Context, sess *session.Session, req *
 		NTime:       params[3],
 		Nonce:       params[4],
 		ExtraNonce1: sess.ExtraNonce1(),
-		WorkerDiff:  sess.Difficulty(),
+		WorkerDiff:  sess.EffectiveDifficulty(diffGraceWindow),
 		UserAgent:   sess.UserAgent(),
 		RemoteIP:    sess.RemoteIP,
 	}
@@ -219,6 +237,12 @@ func (h *Handler) handleSubmit(ctx context.Context, sess *session.Session, req *
 
 	result, err := h.shareSink.SubmitShare(ctx, sess.PoolID, submit)
 	if err != nil {
+		if h.bans != nil {
+			h.bans.RecordShare(sess.RemoteIP, false)
+		}
+		if h.Counters != nil && h.Counters.ShareRejected != nil {
+			h.Counters.ShareRejected(sess.PoolID)
+		}
 		code := protocol.ErrOther
 		switch {
 		case errors.Is(err, jobs.ErrJobNotFound):
@@ -232,7 +256,20 @@ func (h *Handler) handleSubmit(ctx context.Context, sess *session.Session, req *
 		return sess.WriteResponse(protocol.ErrResponse(req.ID,
 			protocol.NewError(code, err.Error())))
 	}
-	_ = result // per-share stats persistence lands in Stage 4
+	if h.bans != nil {
+		h.bans.RecordShare(sess.RemoteIP, true)
+	}
+	if ctrl, ok := sess.Vardiff.(*vardiff.Controller); ok && ctrl != nil {
+		ctrl.OnShare(time.Now())
+	}
+	if h.Counters != nil {
+		if h.Counters.ShareAccepted != nil {
+			h.Counters.ShareAccepted(sess.PoolID)
+		}
+		if result.BlockCandidate && h.Counters.BlockFound != nil {
+			h.Counters.BlockFound(sess.PoolID)
+		}
+	}
 	return sess.WriteResponse(protocol.OKResponse(req.ID, true))
 }
 

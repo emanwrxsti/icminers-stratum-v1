@@ -223,7 +223,37 @@ binary would duplicate the same wiring.
 Payouts (moving balances on-chain) belong to a future `payoutd`; Stage 8 is
 hardening.
 
-## Stage 8 — hardening
+## Stage 8 — DONE: hardening
 
-- [ ] Per-worker vardiff controller (`internal/stratum/vardiff`).
-- [ ] Banning (`internal/bans`), region health, metrics, graceful shutdown polish.
+- [x] Per-session vardiff controller (`internal/stratum/vardiff/controller.go`):
+      share-rate estimation per retarget window, ±variance dead band (default
+      30%), per-step clamp (max 4x), port min/max bounds, idle decay toward
+      MinDiff. Server retarget loop pushes `mining.set_difficulty`; a raise
+      keeps an 8s grace window during which shares mined against the previous
+      (lower) difficulty are still validated and credited at that difficulty
+      (`Session.EffectiveDifficulty`). Verified live: an honest miner was
+      walked 1e-9 → 4e-9 → 1.42e-8 with every share accepted throughout.
+- [x] Per-IP banning (`internal/bans`): invalid-share ratio over a judged
+      window (with clean-window reset so history cannot mask an attack),
+      malformed-flood threshold, failed-auth threshold, time-limited bans with
+      lazy expiry, bounded tracking maps. Enforced at accept (refused before
+      any protocol work) and fed from the submit and codec paths. Verified
+      live: malformed flood → banned → reconnect dropped → ban expired →
+      service restored.
+- [x] Metrics (`internal/metrics`): dependency-free Prometheus text registry
+      (counters + sampled gauges) served at `GET /metrics` on the API:
+      `pool_shares_total{pool,result}`, `pool_blocks_found_total{pool}`,
+      `stratum_sessions`, `bans_active`, `spool_bytes`,
+      `sharewriter_written_total` / `sharewriter_dropped_total`.
+- [x] Region/node health: `GET /api/health` now includes per-pool lifecycle
+      states alongside region, node id, session count, and database presence.
+- [x] Shutdown polish: the vardiff loop joins the server WaitGroup and every
+      Stage 6/7 component already stops in dependency order.
+- [x] Tests: controller math (raise/lower/clamp/ceiling/idle-floor/variance
+      band/window reset), ban thresholds + expiry + disabled mode + healthy
+      miner never banned, metrics rendering (series identity, headers).
+
+All eight stages are complete. Future work beyond this roadmap: payoutd
+(moving credited balances on-chain), further coin families (RXD, SCASH, ALPH)
+behind the existing `CoinAdapter`/`bitcoinbase` seams, and a standalone YAML
+config front-end.

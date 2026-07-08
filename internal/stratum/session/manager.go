@@ -73,6 +73,19 @@ func (m *Manager) CountForPool(poolID string) int {
 
 // ForEachPool runs fn for every live session on the given pool. Used to close a
 // single pool's sessions (e.g. on pause) without touching other pools.
+// ForEach invokes fn for every live session across all pools.
+func (m *Manager) ForEach(fn func(*Session)) {
+	m.mu.RLock()
+	sessions := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		sessions = append(sessions, s)
+	}
+	m.mu.RUnlock()
+	for _, s := range sessions {
+		fn(s)
+	}
+}
+
 func (m *Manager) ForEachPool(poolID string, fn func(*Session)) {
 	m.mu.RLock()
 	targets := make([]*Session, 0)

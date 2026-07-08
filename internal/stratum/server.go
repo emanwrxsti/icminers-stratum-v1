@@ -13,12 +13,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/bans"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/config"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/jobs"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/logging"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/pool"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/stratum/protocol"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/stratum/session"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/stratum/vardiff"
 )
 
 // Version is reported to miners via client.get_version.
@@ -36,6 +38,7 @@ type Server struct {
 	lifecycle *pool.PoolLifecycleManager
 	alloc     *session.ExtraNonce1Allocator
 	handler   *Handler
+	bans      *bans.Manager
 
 	mu        sync.Mutex
 	listeners []net.Listener
@@ -69,6 +72,55 @@ func newHandlerForRegistry(l *logging.Logger, lifecycle *pool.PoolLifecycleManag
 		sink = registry
 	}
 	return NewHandler(l, lifecycle, alloc, js, sink)
+}
+
+// SetHandlerCounters wires metrics hooks for share outcomes. Call before Start.
+func (s *Server) SetHandlerCounters(c *HandlerCounters) {
+	s.handler.Counters = c
+}
+
+// SetBanManager wires per-IP banning (nil disables). Call before Start.
+func (s *Server) SetBanManager(b *bans.Manager) {
+	s.bans = b
+	s.handler.bans = b
+}
+
+// runVardiffLoop periodically retargets every vardiff session's difficulty
+// and pushes mining.set_difficulty on changes.
+func (s *Server) runVardiffLoop(ctx context.Context) {
+	interval := time.Duration(s.cfg.VarDiffRetargetInterval)
+	if interval <= 0 {
+		interval = 60 * time.Second
+	}
+	ticker := time.NewTicker(interval / 2)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			now := time.Now()
+			s.sessions.ForEach(func(sess *session.Session) {
+				ctrl, ok := sess.Vardiff.(*vardiff.Controller)
+				if !ok || ctrl == nil {
+					return
+				}
+				newDiff, changed := ctrl.Retarget(now, sess.Difficulty())
+				if !changed {
+					return
+				}
+				sess.UpdateDifficulty(newDiff)
+				if err := sess.WriteNotification(&protocol.Notification{
+					Method: protocol.MethodSetDifficulty,
+					Params: []any{newDiff},
+				}); err != nil {
+					return
+				}
+				s.log.Debug("vardiff retarget",
+					"session", sess.ID, "pool", sess.PoolID, "newDiff", newDiff)
+			})
+		}
+	}
 }
 
 // BroadcastNotify implements jobs.Broadcaster: sends mining.notify to every
@@ -113,6 +165,12 @@ func (s *Server) Start(ctx context.Context) error {
 		s.log.Info("stratum port listening", "addr", addr, "pool", port.PoolID, "vardiff", port.VarDiff)
 	}
 
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		s.runVardiffLoop(ctx)
+	}()
+
 	// Close listeners when the context is cancelled.
 	go func() {
 		<-ctx.Done()
@@ -152,6 +210,15 @@ func (s *Server) acceptLoop(ctx context.Context, ln net.Listener, port config.Po
 			return
 		}
 
+		// Banned IPs are refused before any protocol work.
+		if s.bans != nil {
+			host, _, splitErr := net.SplitHostPort(conn.RemoteAddr().String())
+			if splitErr == nil && s.bans.IsBanned(host) {
+				_ = conn.Close()
+				continue
+			}
+		}
+
 		// If the port's pool is disabled, refuse the connection cleanly.
 		if st, err := s.lifecycle.GetPoolState(port.PoolID); err != nil || st == pool.StateDisabled {
 			_ = conn.Close()
@@ -164,6 +231,15 @@ func (s *Server) acceptLoop(ctx context.Context, ln net.Listener, port config.Po
 			startDiff = port.MinDiff
 		}
 		sess.SetDifficulty(startDiff)
+		if port.VarDiff {
+			sess.Vardiff = vardiff.NewController(vardiff.ControllerConfig{
+				MinDiff:          port.MinDiff,
+				MaxDiff:          port.MaxDiff,
+				TargetInterval:   time.Duration(s.cfg.VarDiffTargetInterval),
+				RetargetInterval: time.Duration(s.cfg.VarDiffRetargetInterval),
+				VariancePercent:  s.cfg.VarDiffVariancePercent,
+			}, time.Now())
+		}
 
 		if !s.sessions.Add(sess) {
 			s.log.Debug("per-IP connection cap reached", "ip", sess.RemoteIP)
@@ -204,6 +280,10 @@ func (s *Server) handleConn(ctx context.Context, sess *session.Session) {
 			if errors.Is(err, protocol.ErrLineTooLong) || errors.As(err, &malformedErr) {
 				malformed++
 				s.log.Debug("malformed input", "ip", sess.RemoteIP, "count", malformed, "err", err)
+				if s.bans != nil && s.bans.RecordMalformed(sess.RemoteIP) {
+					s.log.Info("dropping connection: IP banned for malformed flood", "ip", sess.RemoteIP)
+					return
+				}
 				if malformed >= maxMalformedPerConn {
 					s.log.Info("dropping connection for malformed spam", "ip", sess.RemoteIP)
 					return

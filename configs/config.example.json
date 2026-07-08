@@ -26,7 +26,10 @@
         "minDiff": 64,
         "maxDiff": 1048576
       }
-    ]
+    ],
+    "varDiffTargetInterval": "10s",
+    "varDiffRetargetInterval": "60s",
+    "varDiffVariancePercent": 30
   },
   "pools": [
     {
@@ -88,5 +91,13 @@
     ],
     "spoolDir": "spool",
     "spoolMaxBytes": 268435456
+  },
+  "banning": {
+    "enabled": true,
+    "invalidPercent": 50,
+    "checkThreshold": 50,
+    "malformedThreshold": 5,
+    "failedAuthThreshold": 10,
+    "banDuration": "10m"
   }
 }

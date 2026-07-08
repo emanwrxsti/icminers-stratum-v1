@@ -52,6 +52,27 @@ type Config struct {
 
 	// NATS configures Stage 6 master/regional messaging.
 	NATS NATSConfig `json:"nats"`
+
+	// Banning configures per-IP misbehavior bans.
+	Banning BanningConfig `json:"banning"`
+}
+
+// BanningConfig tunes per-IP banning.
+type BanningConfig struct {
+	Enabled bool `json:"enabled"`
+	// InvalidPercent bans once this invalid-share percentage is reached over
+	// CheckThreshold shares (default 50).
+	InvalidPercent float64 `json:"invalidPercent"`
+	// CheckThreshold is the minimum shares before the ratio is judged
+	// (default 50).
+	CheckThreshold int `json:"checkThreshold"`
+	// MalformedThreshold bans after this many malformed lines (default 5).
+	MalformedThreshold int `json:"malformedThreshold"`
+	// FailedAuthThreshold bans after this many failed authorizations
+	// (default 10).
+	FailedAuthThreshold int `json:"failedAuthThreshold"`
+	// BanDuration is how long bans last (default 10m).
+	BanDuration Duration `json:"banDuration"`
 }
 
 // NATSConfig configures JetStream messaging.
@@ -94,6 +115,15 @@ type StratumConfig struct {
 	// MaxLineBytes caps a single JSON-RPC line to defend against memory-abuse
 	// spam. 0 falls back to a safe default.
 	MaxLineBytes int `json:"maxLineBytes"`
+
+	// VarDiffTargetInterval is the desired time between shares per worker
+	// (default 10s).
+	VarDiffTargetInterval Duration `json:"varDiffTargetInterval"`
+	// VarDiffRetargetInterval is how often difficulty is reconsidered
+	// (default 60s).
+	VarDiffRetargetInterval Duration `json:"varDiffRetargetInterval"`
+	// VarDiffVariancePercent is the no-adjust tolerance band (default 30).
+	VarDiffVariancePercent float64 `json:"varDiffVariancePercent"`
 }
 
 // PortConfig describes one stratum listening port. Each port maps to one pool.
@@ -225,6 +255,15 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) applyDefaults() {
+	if c.Stratum.VarDiffTargetInterval <= 0 {
+		c.Stratum.VarDiffTargetInterval = Duration(10 * time.Second)
+	}
+	if c.Stratum.VarDiffRetargetInterval <= 0 {
+		c.Stratum.VarDiffRetargetInterval = Duration(60 * time.Second)
+	}
+	if c.Stratum.VarDiffVariancePercent <= 0 {
+		c.Stratum.VarDiffVariancePercent = 30
+	}
 	for i := range c.Pools {
 		if c.Pools[i].PPLNSFactor <= 0 {
 			c.Pools[i].PPLNSFactor = 2.0

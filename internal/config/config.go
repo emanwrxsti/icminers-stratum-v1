@@ -242,6 +242,11 @@ type CoinConfig struct {
 	// OrphanDepth: a block absent from the best chain is declared orphaned
 	// once the chain is this far past its height (default 12).
 	OrphanDepth int64 `json:"orphanDepth"`
+
+	// RandomXEpochDuration is the RandomX seed epoch length in seconds, used
+	// by RandomX coins (SCASH). 0 uses the coin's default (one week). Must
+	// match the daemon's consensus value.
+	RandomXEpochDuration int64 `json:"randomxEpochDuration"`
 }
 
 // CoinBySymbol returns the coin config with the given symbol (case-insensitive).

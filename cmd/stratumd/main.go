@@ -21,6 +21,8 @@ import (
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/btc"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/ltc"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/rpc"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/rxd"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/scash"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/config"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/jobs"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/logging"
@@ -413,8 +415,8 @@ func main() {
 // buildAdapter constructs the coin adapter for a pool from its coin config.
 // Bitcoin-like coins share one implementation (internal/coins/bitcoinlike);
 // each supported symbol selects its address params and proof-of-work hash.
-// Currently BTC (sha256d) and LTC (scrypt) are wired; further coins land
-// behind the same seam.
+// BTC (sha256d), LTC (scrypt), RXD (sha512/256d), and SCASH (RandomX) are
+// wired behind the same seam.
 func buildAdapter(cfg *config.Config, p config.PoolConfig) (*bitcoinlike.Adapter, error) {
 	coin, ok := cfg.CoinBySymbol(p.CoinSymbol)
 	if !ok {
@@ -435,10 +437,31 @@ func buildAdapter(cfg *config.Config, p config.PoolConfig) (*bitcoinlike.Adapter
 			RPC: client, Network: coin.Network,
 			PoolAddress: p.Address, CoinbaseTag: p.CoinbaseTag,
 		})
+	case "RXD":
+		return rxd.New(rxd.Options{
+			RPC: client, Network: coin.Network,
+			PoolAddress: p.Address, CoinbaseTag: p.CoinbaseTag,
+		})
+	case "SCASH":
+		// SCASH requires a RandomX backend. This build ships without a
+		// librandomx binding, so RandomX stays nil and share validation
+		// fails closed until a backend is wired via randomxBackend().
+		return scash.New(scash.Options{
+			RPC: client, Network: coin.Network,
+			PoolAddress: p.Address, CoinbaseTag: p.CoinbaseTag,
+			RandomX:       randomxBackend(),
+			EpochDuration: coin.RandomXEpochDuration,
+		})
 	default:
-		return nil, fmt.Errorf("pool %s: coin %s not implemented (supported: BTC, LTC)", p.ID, coin.Symbol)
+		return nil, fmt.Errorf("pool %s: coin %s not implemented (supported: BTC, LTC, RXD, SCASH)", p.ID, coin.Symbol)
 	}
 }
+
+// randomxBackend returns the RandomX hasher for SCASH pools. It returns nil in
+// this build (no librandomx binding compiled in); a cgo build tag can provide
+// a real implementation. With nil, the SCASH adapter fails share validation
+// closed rather than accepting unverified work.
+func randomxBackend() scash.RandomXHasher { return nil }
 
 // nodePrefix derives a 2-byte extranonce1 prefix from the node id.
 func nodePrefix(nodeID string) []byte {

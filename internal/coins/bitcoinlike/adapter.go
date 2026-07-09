@@ -38,6 +38,12 @@ type Spec struct {
 	Params bitcoinbase.AddressParams
 	// PoW is the coin's proof-of-work hash (defaults to SHA256d when nil).
 	PoW PoWHash
+	// IdentityHash computes the block identity hash from the 80-byte header.
+	// Most bitcoin-like coins use SHA256d (the default when nil), but some
+	// (e.g. Radiant, which replaced SHA256 with SHA-512/256 throughout) use a
+	// different hash for the block id as well as the PoW. This affects only
+	// the reported BlockHash, never difficulty.
+	IdentityHash PoWHash
 	// VersionRollingMask advertised in mining.configure and enforced on
 	// submit (0 disables version rolling).
 	VersionRollingMask uint32
@@ -74,6 +80,11 @@ func New(spec Spec, opts Options) (*Adapter, error) {
 	}
 	if spec.PoW == nil {
 		spec.PoW = func(header []byte) ([]byte, error) {
+			return bitcoinbase.DoubleSHA256(header), nil
+		}
+	}
+	if spec.IdentityHash == nil {
+		spec.IdentityHash = func(header []byte) ([]byte, error) {
 			return bitcoinbase.DoubleSHA256(header), nil
 		}
 	}
@@ -270,13 +281,17 @@ func (a *Adapter) ValidateShare(ctx context.Context, job *coins.MiningJob, submi
 		return nil, fmt.Errorf("%s submit: %w", a.spec.CoinSymbol, err)
 	}
 
-	// PoW hash drives difficulty; the block identity is always SHA256d.
+	// PoW hash drives difficulty; the identity hash (SHA256d for most coins)
+	// produces the reported block hash.
 	powLE, err := a.spec.PoW(header)
 	if err != nil {
 		return nil, fmt.Errorf("%s submit: pow hash: %w", a.spec.CoinSymbol, err)
 	}
 	powBig := vardiff.HashToBig(powLE)
-	idLE := bitcoinbase.DoubleSHA256(header)
+	idLE, err := a.spec.IdentityHash(header)
+	if err != nil {
+		return nil, fmt.Errorf("%s submit: identity hash: %w", a.spec.CoinSymbol, err)
+	}
 
 	result := &coins.ShareResult{ShareDiff: vardiff.ShareDifficulty(powBig)}
 	shareTarget := vardiff.DifficultyToTarget(submit.WorkerDiff)

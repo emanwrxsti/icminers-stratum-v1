@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ func countShares(t *testing.T, s *Store, poolID string) int {
 
 func mkShare(poolID, miner string, i int) ShareRecord {
 	return ShareRecord{
+		ID:     fmt.Sprintf("%s-%s-%d", poolID, miner, i),
 		PoolID: poolID, BlockHeight: 1, Difficulty: 1, NetworkDifficulty: 1,
 		Miner: miner, Worker: "w", Source: "us",
 		Created: time.Now().UTC().Add(time.Duration(i) * time.Millisecond),
@@ -152,5 +154,116 @@ func TestWriterDivertsToWALInsteadOfDropping(t *testing.T) {
 	got := countShares(t, s, "divert-pool")
 	if got != total {
 		t.Fatalf("shares persisted = %d, want %d (durability hole!)", got, total)
+	}
+}
+
+// TestWALRetainsRecordsWhenInsertFails is the regression test for the WAL
+// drain bug: if the database insert fails during a drain, NO records may be
+// lost — they must all remain on disk for the next attempt. The original
+// implementation truncated the WAL before the insert and lost everything in
+// exactly this (database-outage) scenario.
+func TestWALRetainsRecordsWhenInsertFails(t *testing.T) {
+	log := logging.New(logging.Options{Level: "error"})
+	walPath := filepath.Join(t.TempDir(), "shares.wal")
+
+	wal, err := openShareWAL(walPath, 0, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wal.close()
+
+	const n = 2500 // spans multiple drain batches (batch size 1000)
+	for i := 0; i < n; i++ {
+		if err := wal.append(mkShare("fail-pool", "alice", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sizeBefore := wal.len()
+	if sizeBefore == 0 {
+		t.Fatal("WAL empty after appends")
+	}
+
+	// A drain whose insert always fails must leave the WAL unchanged.
+	failErr := context.DeadlineExceeded
+	drainErr := wal.drain(func(recs []ShareRecord) error {
+		return failErr
+	})
+	if drainErr == nil {
+		t.Fatal("drain reported success despite failing insert")
+	}
+	if wal.len() != sizeBefore {
+		t.Fatalf("WAL size changed on failed drain: before=%d after=%d (records lost!)",
+			sizeBefore, wal.len())
+	}
+
+	// Now let the insert succeed and confirm every record is delivered exactly
+	// once, in order.
+	var got []ShareRecord
+	if err := wal.drain(func(recs []ShareRecord) error {
+		got = append(got, recs...)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != n {
+		t.Fatalf("recovered %d records, want %d", len(got), n)
+	}
+	if wal.len() != 0 {
+		t.Fatalf("WAL not empty after successful drain: %d bytes", wal.len())
+	}
+	// Order + identity check on a sample.
+	if got[0].Miner != "alice" || got[n-1].BlockHeight != 1 {
+		t.Fatalf("unexpected record content: first=%+v last=%+v", got[0], got[n-1])
+	}
+}
+
+// TestWALPartialBatchFailureKeepsUncommitted proves that when the Kth batch
+// fails, batches before it are committed (removed) and the failing batch plus
+// everything after it are retained.
+func TestWALPartialBatchFailureKeepsUncommitted(t *testing.T) {
+	log := logging.New(logging.Options{Level: "error"})
+	walPath := filepath.Join(t.TempDir(), "shares.wal")
+	wal, err := openShareWAL(walPath, 0, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer wal.close()
+
+	// 2500 records => 3 batches of [1000,1000,500].
+	const n = 2500
+	for i := 0; i < n; i++ {
+		if err := wal.append(mkShare("partial-pool", "bob", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Fail on the 2nd batch: 1st batch (1000) commits, 1500 remain.
+	calls := 0
+	var committed int
+	err = wal.drain(func(recs []ShareRecord) error {
+		calls++
+		if calls == 2 {
+			return context.DeadlineExceeded
+		}
+		committed += len(recs)
+		return nil
+	})
+	if err == nil {
+		t.Fatal("expected failure on second batch")
+	}
+	if committed != 1000 {
+		t.Fatalf("committed = %d, want 1000", committed)
+	}
+
+	// The remaining 1500 must still be on disk; a clean drain recovers them.
+	var recovered int
+	if err := wal.drain(func(recs []ShareRecord) error {
+		recovered += len(recs)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if recovered != 1500 {
+		t.Fatalf("recovered %d after partial failure, want 1500", recovered)
 	}
 }

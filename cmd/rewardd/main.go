@@ -101,11 +101,11 @@ func buildProcessor(cfg *config.Config, p config.PoolConfig, store *postgres.Sto
 		return nil, fmt.Errorf("no coin config for symbol %q", p.CoinSymbol)
 	}
 	switch strings.ToUpper(coin.Symbol) {
-	case "BTC", "LTC":
-		// Both are bitcoin-like: confirmation tracking uses the same
-		// getblockcount/getblockhash chain view.
+	case "BTC", "LTC", "RXD", "SCASH":
+		// All are bitcoin-like: confirmation tracking uses the same
+		// getblockcount/getblockhash chain view regardless of the PoW.
 	default:
-		return nil, fmt.Errorf("coin %s not implemented (supported: BTC, LTC)", coin.Symbol)
+		return nil, fmt.Errorf("coin %s not implemented (supported: BTC, LTC, RXD, SCASH)", coin.Symbol)
 	}
 	if coin.RPCURL == "" {
 		return nil, fmt.Errorf("coin %s has no rpcUrl", coin.Symbol)

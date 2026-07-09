@@ -47,29 +47,33 @@ func (w *shareWAL) append(rec ShareRecord) error {
 // len returns the WAL's on-disk byte size (0 = empty).
 func (w *shareWAL) len() int64 { return w.sp.Len() }
 
-// drain replays every WAL record through insert, in order. A failed insert
-// stops the drain and keeps the remainder on disk for the next attempt.
+// walDrainBatchSize is how many WAL records are inserted per DB round-trip
+// during recovery.
+const walDrainBatchSize = 1000
+
+// drain replays WAL records into the database in batches. Crucially, a batch
+// is only removed from the WAL AFTER insert returns nil for it: if the
+// database is still down, the failing batch and everything after it stay on
+// disk for the next attempt. This is the fix for the original bug, where
+// records were truncated from the WAL before the (possibly failing) database
+// insert, losing them in exactly the outage scenario the WAL exists for.
 func (w *shareWAL) drain(insert func(recs []ShareRecord) error) error {
-	// Collect a batch, then insert; the spool's Drain replays one at a time,
-	// so we accumulate and flush at the end via a closure buffer.
-	var buf []ShareRecord
-	drainErr := w.sp.Drain(func(_ string, payload []byte) error {
-		var rec ShareRecord
-		if err := json.Unmarshal(payload, &rec); err != nil {
-			// A corrupt line is skipped rather than wedging recovery forever.
-			w.log.Error("skipping corrupt WAL record", "err", err)
+	return w.sp.DrainBatch(walDrainBatchSize, func(records []spool.Record) error {
+		recs := make([]ShareRecord, 0, len(records))
+		for _, r := range records {
+			var rec ShareRecord
+			if err := json.Unmarshal(r.Payload, &rec); err != nil {
+				// A corrupt line is skipped rather than wedging recovery.
+				w.log.Error("skipping corrupt WAL record", "err", err)
+				continue
+			}
+			recs = append(recs, rec)
+		}
+		if len(recs) == 0 {
 			return nil
 		}
-		buf = append(buf, rec)
-		return nil
+		return insert(recs)
 	})
-	if drainErr != nil {
-		return drainErr
-	}
-	if len(buf) == 0 {
-		return nil
-	}
-	return insert(buf)
 }
 
 // close releases the WAL file.
@@ -92,7 +96,7 @@ func (w *ShareWriter) recoveryLoop(ctx context.Context) {
 			err := w.wal.drain(func(recs []ShareRecord) error {
 				dctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 				defer cancel()
-				return w.copySharesCtx(dctx, recs)
+				return w.copySharesIdempotent(dctx, recs)
 			})
 			if err != nil {
 				w.log.Warn("WAL drain incomplete; will retry", "err", err)

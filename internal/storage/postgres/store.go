@@ -137,6 +137,16 @@ var migrations = []string{
 		ON payments (poolid, status)`,
 	`CREATE INDEX IF NOT EXISTS idx_payments_pool_miner
 		ON payments (poolid, miner, created)`,
+
+	// 005: share id for idempotent persistence. A stable id assigned when the
+	// share is accepted lets the durable WAL replay records after a crash or a
+	// commit-then-error without double-counting.
+	`ALTER TABLE shares ADD COLUMN IF NOT EXISTS id text NOT NULL DEFAULT ''`,
+	// 006: unique index on (id, created). On a partitioned table a unique
+	// index must include the partition key (created). Empty ids (legacy rows)
+	// are excluded via a partial index so they don't collide.
+	`CREATE UNIQUE INDEX IF NOT EXISTS uq_shares_id_created
+		ON shares (id, created) WHERE id <> ''`,
 }
 
 // applyMigrations records progress in schema_migrations and only runs pending

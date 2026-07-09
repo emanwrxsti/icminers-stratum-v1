@@ -2,6 +2,8 @@ package postgres
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,8 +13,25 @@ import (
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/logging"
 )
 
+// newShareID returns a random 128-bit hex id used to deduplicate shares on
+// replay. crypto/rand makes collisions across the fleet negligible.
+func newShareID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// rand.Read essentially never fails; fall back to a time-based id.
+		return hex.EncodeToString([]byte(time.Now().UTC().Format("20060102150405.000000000")))
+	}
+	return hex.EncodeToString(b[:])
+}
+
 // ShareRecord is one accepted share bound for the shares table.
 type ShareRecord struct {
+	// ID is a stable, unique identifier assigned once when the share is
+	// accepted. It makes persistence idempotent: a share replayed from the
+	// durable WAL after a crash or a commit-then-error is deduplicated by a
+	// unique index rather than inserted twice. Empty IDs are backfilled at
+	// enqueue time.
+	ID                string
 	PoolID            string
 	BlockHeight       int64
 	Difficulty        float64 // share difficulty credited (worker difficulty)
@@ -149,6 +168,9 @@ func NewShareWriter(store *Store, log *logging.Logger, opts WriterOptions) *Shar
 // no WAL is configured, or the WAL itself cannot accept it, is the share
 // dropped and counted.
 func (w *ShareWriter) Enqueue(rec ShareRecord) {
+	if rec.ID == "" {
+		rec.ID = newShareID()
+	}
 	select {
 	case w.ch <- rec:
 	default:
@@ -195,7 +217,7 @@ func (w *ShareWriter) Close() {
 			err := w.wal.drain(func(recs []ShareRecord) error {
 				dctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 				defer cancel()
-				return w.copySharesCtx(dctx, recs)
+				return w.copySharesIdempotent(dctx, recs)
 			})
 			if err != nil {
 				w.log.Warn("final WAL drain incomplete; records remain on disk for next start", "err", err)
@@ -218,19 +240,34 @@ func (w *ShareWriter) loop(ctx context.Context) {
 			return
 		}
 		w.mu.Lock()
+		hadRetained := len(w.pending) > 0
 		toWrite := append(w.pending, batch...)
 		w.pending = nil
 		w.mu.Unlock()
 		batch = batch[:0]
 
-		if err := w.copyShares(ctx, toWrite); err != nil {
-			// One immediate retry (transient errors), then retain.
-			if err2 := w.copyShares(ctx, toWrite); err2 != nil {
-				w.retain(toWrite)
-				w.log.Error("share flush failed; batch retained",
-					"shares", len(toWrite), "err", err2)
-				return
-			}
+		// Fresh batches use the fast plain COPY. Any batch that carries
+		// previously-retained shares might contain records a prior COPY
+		// committed-then-errored on, so it goes through the idempotent
+		// (id-deduplicated) insert to avoid double-counting on replay.
+		var err error
+		if hadRetained {
+			err = w.copySharesIdempotent(ctx, toWrite)
+		} else {
+			err = w.copyShares(ctx, toWrite)
+		}
+		if err != nil {
+			// Retain for the next cycle rather than retrying in-line: a COPY
+			// can commit on the server yet return a client-side error (e.g. a
+			// context deadline firing after commit, or a connection blip), and
+			// an immediate retry would then double-insert. Retaining and
+			// letting the next (idempotent) flush handle it keeps the failure
+			// path simple; durability across a sustained outage is the WAL's
+			// job.
+			w.retain(toWrite)
+			w.log.Error("share flush failed; batch retained",
+				"shares", len(toWrite), "err", err)
+			return
 		}
 		w.written.Add(uint64(len(toWrite)))
 	}
@@ -303,20 +340,67 @@ func (w *ShareWriter) copyShares(ctx context.Context, recs []ShareRecord) error 
 	return w.copySharesCtx(cctx, recs)
 }
 
+// shareColumns is the shares table column list used by every insert path.
+var shareColumns = []string{"id", "poolid", "blockheight", "difficulty",
+	"networkdifficulty", "miner", "worker", "useragent", "ipaddress", "source", "created"}
+
+// shareColumnList is shareColumns joined for use in SQL text.
+const shareColumnList = "id, poolid, blockheight, difficulty, networkdifficulty, " +
+	"miner, worker, useragent, ipaddress, source, created"
+
+func shareValues(r ShareRecord) []any {
+	return []any{r.ID, r.PoolID, r.BlockHeight, r.Difficulty, r.NetworkDifficulty,
+		r.Miner, r.Worker, r.UserAgent, r.IPAddress, r.Source, r.Created}
+}
+
+// copySharesCtx is the fast hot-path insert: a plain COPY. It is used for the
+// steady-state flush where at-most-once-per-attempt is fine.
 func (w *ShareWriter) copySharesCtx(ctx context.Context, recs []ShareRecord) error {
 	if len(recs) == 0 {
 		return nil
 	}
 	_, err := w.store.Pool.CopyFrom(ctx,
-		pgx.Identifier{"shares"},
-		[]string{"poolid", "blockheight", "difficulty", "networkdifficulty",
-			"miner", "worker", "useragent", "ipaddress", "source", "created"},
+		pgx.Identifier{"shares"}, shareColumns,
 		pgx.CopyFromSlice(len(recs), func(i int) ([]any, error) {
-			r := recs[i]
-			return []any{r.PoolID, r.BlockHeight, r.Difficulty, r.NetworkDifficulty,
-				r.Miner, r.Worker, r.UserAgent, r.IPAddress, r.Source, r.Created}, nil
+			return shareValues(recs[i]), nil
 		}))
 	return err
+}
+
+// copySharesIdempotent inserts shares deduplicated on their id, so records
+// replayed from the durable WAL (which may already be in the table after a
+// commit-then-error) do not double-count. It COPYs into a TEMP staging table,
+// then INSERT ... SELECT ... ON CONFLICT DO NOTHING into shares. Used by the
+// WAL recovery drain, where correctness matters more than raw throughput.
+func (w *ShareWriter) copySharesIdempotent(ctx context.Context, recs []ShareRecord) error {
+	if len(recs) == 0 {
+		return nil
+	}
+	tx, err := w.store.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
+		`CREATE TEMP TABLE _share_stage (LIKE shares INCLUDING DEFAULTS)
+		 ON COMMIT DROP`); err != nil {
+		return err
+	}
+	if _, err := tx.CopyFrom(ctx,
+		pgx.Identifier{"_share_stage"}, shareColumns,
+		pgx.CopyFromSlice(len(recs), func(i int) ([]any, error) {
+			return shareValues(recs[i]), nil
+		})); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO shares (`+shareColumnList+`)
+		 SELECT `+shareColumnList+` FROM _share_stage
+		 ON CONFLICT (id, created) WHERE id <> '' DO NOTHING`); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // InsertBlock records a found block candidate with status "pending".

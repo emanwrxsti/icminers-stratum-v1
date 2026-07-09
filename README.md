@@ -47,11 +47,16 @@ a dependency-free Prometheus `/metrics` endpoint.
 (PostgreSQL), `github.com/nats-io/nats.go` (JetStream messaging), and
 `golang.org/x/crypto` (scrypt for Litecoin).
 
-**Coins:** BTC (sha256d) and LTC (scrypt) are implemented and tested behind the
-shared `internal/coins/bitcoinlike` adapter. Adding another Bitcoin-derived
-coin is a ~40-line constructor selecting address parameters and a PoW hash;
-non-Bitcoin chains (e.g. Alephium) are not implemented. See
-[docs/roadmap.md](docs/roadmap.md) for exactly what is done and what is pending.
+**Coins:** BTC (sha256d), LTC (scrypt), RXD (Radiant, sha512/256d), and SCASH
+(Scash, RandomX) are implemented and tested behind the shared
+`internal/coins/bitcoinlike` adapter. Adding another Bitcoin-derived coin is a
+small constructor selecting address parameters and a PoW hash (and, where the
+chain replaced SHA256, a block-identity hash). SCASH's memory-hard RandomX VM
+hash is supplied through a pluggable `RandomXHasher` (wire a librandomx binding
+in production; validation fails closed without one), while its seed-hash epoch
+logic and commitment transform are pure Go and KAT-verified. Non-Bitcoin chains
+(e.g. Alephium) are not implemented. See [docs/roadmap.md](docs/roadmap.md) for
+exactly what is done and what is pending.
 
 **CI** (`.github/workflows/go.yml`) runs `gofmt`, `go vet`, `go test ./...`,
 `go test -race ./...`, and builds all three binaries (`stratumd`, `rewardd`,

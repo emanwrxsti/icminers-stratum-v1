@@ -36,6 +36,28 @@ var LTCTestNet = AddressParams{P2PKHVersion: 0x6f, P2SHVersion: 0x3a, Bech32HRP:
 // LTCRegTest are Litecoin regtest address parameters.
 var LTCRegTest = AddressParams{P2PKHVersion: 0x6f, P2SHVersion: 0x3a, Bech32HRP: "rltc"}
 
+// RXDMainNet are Radiant mainnet address parameters. Radiant is a Bitcoin fork
+// that kept the legacy base58 prefixes (P2PKH 0x00 -> "1...", P2SH 0x05) and
+// does not use bech32. Its PoW and block identity are SHA-512/256d.
+var RXDMainNet = AddressParams{P2PKHVersion: 0x00, P2SHVersion: 0x05, Bech32HRP: ""}
+
+// RXDTestNet are Radiant testnet address parameters.
+var RXDTestNet = AddressParams{P2PKHVersion: 0x6f, P2SHVersion: 0xc4, Bech32HRP: ""}
+
+// RXDRegTest are Radiant regtest address parameters.
+var RXDRegTest = AddressParams{P2PKHVersion: 0x6f, P2SHVersion: 0xc4, Bech32HRP: ""}
+
+// SCASHMainNet are Scash (SatoshiCash) mainnet address parameters. Scash forks
+// Bitcoin Core directly and keeps Bitcoin's base58 version bytes, with a
+// distinct bech32 HRP ("scash") to prevent cross-chain address confusion.
+var SCASHMainNet = AddressParams{P2PKHVersion: 0x00, P2SHVersion: 0x05, Bech32HRP: "scash"}
+
+// SCASHTestNet are Scash testnet address parameters.
+var SCASHTestNet = AddressParams{P2PKHVersion: 0x6f, P2SHVersion: 0xc4, Bech32HRP: "tscash"}
+
+// SCASHRegTest are Scash regtest address parameters.
+var SCASHRegTest = AddressParams{P2PKHVersion: 0x6f, P2SHVersion: 0xc4, Bech32HRP: "rscash"}
+
 // AddressToScript converts a payout address into its scriptPubKey. Supports
 // base58check P2PKH/P2SH and bech32/bech32m segwit v0-v16 programs.
 func AddressToScript(address string, params AddressParams) ([]byte, error) {

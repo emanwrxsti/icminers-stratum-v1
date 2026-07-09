@@ -22,6 +22,8 @@ import (
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/btc"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/ltc"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/rpc"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/rxd"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/scash"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/config"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/logging"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/payouts"
@@ -128,8 +130,28 @@ func buildProcessor(cfg *config.Config, p config.PoolConfig, store *postgres.Sto
 			return nil, err
 		}
 		adapter = a
+	case "RXD":
+		a, err := rxd.New(rxd.Options{
+			RPC: client, Network: coin.Network,
+			PoolAddress: p.Address, CoinbaseTag: p.CoinbaseTag,
+		})
+		if err != nil {
+			return nil, err
+		}
+		adapter = a
+	case "SCASH":
+		// Payouts only need address validation, which is independent of the
+		// RandomX PoW, so no RandomX backend is required here.
+		a, err := scash.New(scash.Options{
+			RPC: client, Network: coin.Network,
+			PoolAddress: p.Address, CoinbaseTag: p.CoinbaseTag,
+		})
+		if err != nil {
+			return nil, err
+		}
+		adapter = a
 	default:
-		return nil, fmt.Errorf("coin %s not implemented (supported: BTC, LTC)", coin.Symbol)
+		return nil, fmt.Errorf("coin %s not implemented (supported: BTC, LTC, RXD, SCASH)", coin.Symbol)
 	}
 	subtractFee := true
 	if p.SubtractFeeFromMiners != nil {

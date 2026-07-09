@@ -87,6 +87,29 @@
       "rpcPassword": "pass",
       "maturityDepth": 100,
       "orphanDepth": 12
+    },
+    {
+      "symbol": "RXD",
+      "name": "Radiant",
+      "algo": "sha512_256d",
+      "network": "mainnet",
+      "rpcUrl": "http://127.0.0.1:7332",
+      "rpcUser": "user",
+      "rpcPassword": "pass",
+      "maturityDepth": 100,
+      "orphanDepth": 12
+    },
+    {
+      "symbol": "SCASH",
+      "name": "Scash",
+      "algo": "randomx",
+      "network": "mainnet",
+      "rpcUrl": "http://127.0.0.1:8342",
+      "rpcUser": "user",
+      "rpcPassword": "pass",
+      "maturityDepth": 100,
+      "orphanDepth": 12,
+      "randomxEpochDuration": 604800
     }
   ],
   "postgres": {

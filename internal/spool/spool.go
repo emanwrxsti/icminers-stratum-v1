@@ -141,6 +141,73 @@ func (s *Spool) Drain(fn func(subject string, payload []byte) error) error {
 	return replayErr
 }
 
+// DrainBatch replays spooled records in batches of up to batchSize. fn is
+// called with each batch and must return nil ONLY when that batch is durably
+// committed downstream (e.g. written to the database). The spool truncates
+// exactly the records from batches fn confirmed; if fn returns an error, that
+// batch and every record after it are retained on disk for the next attempt.
+//
+// This is the durable-drain contract the single-record Drain cannot offer: a
+// caller that batches its downstream writes (like a COPY into PostgreSQL) will
+// never lose records that were read out of the spool but not actually
+// committed.
+func (s *Spool) DrainBatch(batchSize int, fn func(records []Record) error) error {
+	if batchSize <= 0 {
+		batchSize = 1000
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.size == 0 {
+		return nil
+	}
+
+	rf, err := os.Open(s.path)
+	if err != nil {
+		return fmt.Errorf("spool: open for drain: %w", err)
+	}
+	var records []Record
+	sc := bufio.NewScanner(rf)
+	sc.Buffer(make([]byte, 0, 1<<20), 16<<20)
+	for sc.Scan() {
+		line := sc.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var rec Record
+		if err := json.Unmarshal(line, &rec); err != nil {
+			continue // skip a torn/corrupt line rather than wedging the spool
+		}
+		records = append(records, rec)
+	}
+	scanErr := sc.Err()
+	rf.Close()
+	if scanErr != nil {
+		return fmt.Errorf("spool: scan: %w", scanErr)
+	}
+
+	// Commit batch by batch. committed counts records fn confirmed durable.
+	committed := 0
+	var replayErr error
+	for committed < len(records) {
+		end := committed + batchSize
+		if end > len(records) {
+			end = len(records)
+		}
+		batch := records[committed:end]
+		if err := fn(batch); err != nil {
+			replayErr = err
+			break
+		}
+		committed = end
+	}
+
+	// Retain everything not yet committed.
+	if err := s.rewriteLocked(records[committed:]); err != nil {
+		return err
+	}
+	return replayErr
+}
+
 // rewriteLocked atomically replaces the spool contents. Caller holds s.mu.
 func (s *Spool) rewriteLocked(records []Record) error {
 	tmp := s.path + ".tmp"

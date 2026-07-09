@@ -327,7 +327,51 @@ This stage addressed five gaps found in review of the "complete" system.
       (pgx, nats.go, x/crypto — not "zero-dependency"), coin support stated as
       BTC + LTC, and CI/smoke described accurately.
 
-Future work beyond this roadmap: additional Bitcoin-derived coins (each a small
-constructor over `bitcoinlike`), non-Bitcoin chains such as Alephium (which
-need a genuinely different adapter, not the bitcoin-like base), and a standalone
-YAML config front-end.
+## Round 3 — WAL correctness, two more coins, stress hardening
+
+- [x] **Fixed the WAL drain data-loss bug.** The recovery drain accumulated
+      records via the single-record `spool.Drain` callback (always returning
+      nil), which truncated the whole WAL *before* the database insert ran — so
+      a failing insert during a database outage (the exact case the WAL exists
+      for) lost every buffered share. Added `spool.DrainBatch`, which only
+      truncates records from batches the callback confirms durable; the WAL now
+      inserts inside the callback, so a failed batch and everything after it
+      stay on disk. Regression tests cover a fully-failing drain (WAL unchanged)
+      and a mid-drain failure (committed prefix removed, remainder retained).
+- [x] **Idempotent share persistence.** Stress testing surfaced an
+      at-least-once flaw: a COPY can commit server-side yet return a client
+      error (timeout/blip), and the retry or WAL replay then double-inserted.
+      Each share now carries a random id (migration 005/006 add the column and a
+      unique index); the WAL-drain and retained-batch paths use a COPY-to-temp
+      + `INSERT … ON CONFLICT DO NOTHING` upsert, making replay exactly-once.
+      The fast steady-state path stays a plain COPY.
+- [x] **Stress tests** (`internal/storage/postgres/stress_test.go`, behind the
+      `stress` build tag; CI runs them in a dedicated `-race` job). They flood
+      20k–50k shares while (a) the shares table is renamed away to simulate a
+      database outage, (b) a tiny queue is overrun by 8 concurrent producers,
+      and (c) outage/recovery windows alternate across four rounds — asserting
+      in every case zero drops, zero duplicates (rows == distinct ids), and
+      full landing once the database returns.
+- [x] **Third coin — Radiant (RXD).** SHA-512/256d for BOTH proof-of-work and
+      block identity (Radiant replaced SHA256 throughout). Required a small
+      `IdentityHash` seam in `bitcoinlike` (defaulting to SHA256d, so BTC/LTC
+      are unchanged). KAT-verified primitive; a test mines a real SHA-512/256d
+      share, confirms difficulty comes from it (not SHA256d), and checks the
+      block identity is SHA-512/256d and the base58 address set is RXD's.
+- [x] **Fourth coin — Scash (SCASH).** RandomX proof-of-work. RandomX's
+      memory-hard VM hash cannot be reimplemented in pure Go and has no module
+      in the proxy, so it is provided through a pluggable `RandomXHasher`
+      interface (production wires librandomx; tests inject a deterministic
+      double), while everything else is real, pure-Go, and tested: the
+      per-epoch seed-hash derivation (`Scash/RandomX/Epoch/<n>` → SHA-256), the
+      RandomX commitment (`blake2b(header‖rxHash)`, KAT-verified against the
+      reference `randomx_calculate_commitment`), the difficulty comparison, and
+      the address set. With no backend wired, share validation fails closed
+      rather than accepting unverified work. All four coins dispatch behind the
+      same seam in `stratumd`/`rewardd`/`payoutd`.
+
+Future work beyond this roadmap: a librandomx cgo binding to activate SCASH in
+production; additional Bitcoin-derived coins (each a small constructor over
+`bitcoinlike`); non-Bitcoin chains such as Alephium (which need a genuinely
+different adapter, not the bitcoin-like base); and a standalone YAML config
+front-end.

@@ -48,6 +48,19 @@ type WriterOptions struct {
 	BatchSize int
 	// FlushInterval triggers a flush even when the batch is small.
 	FlushInterval time.Duration
+
+	// WALPath, when set, enables the durable share write-ahead log: shares
+	// that cannot be absorbed in memory (queue full, or retention bound hit
+	// during a database outage) are appended here instead of being dropped,
+	// then replayed into the database on recovery. Empty disables the WAL
+	// (shares may then be dropped under sustained overload, as before).
+	WALPath string
+	// WALMaxBytes bounds the WAL file (default 1 GiB). Only meaningful when
+	// WALPath is set.
+	WALMaxBytes int64
+	// WALDrainInterval is how often the recovery loop replays the WAL into the
+	// database (default 5s).
+	WALDrainInterval time.Duration
 }
 
 func (o *WriterOptions) defaults() {
@@ -59,6 +72,12 @@ func (o *WriterOptions) defaults() {
 	}
 	if o.FlushInterval <= 0 {
 		o.FlushInterval = 2 * time.Second
+	}
+	if o.WALDrainInterval <= 0 {
+		o.WALDrainInterval = 5 * time.Second
+	}
+	if o.WALMaxBytes <= 0 {
+		o.WALMaxBytes = 1 << 30 // 1 GiB
 	}
 }
 
@@ -75,6 +94,9 @@ type ShareWriter struct {
 	ch      chan ShareRecord
 	dropped atomic.Uint64
 	written atomic.Uint64
+	toWAL   atomic.Uint64 // shares diverted to the durable WAL
+
+	wal *shareWAL
 
 	mu      sync.Mutex
 	pending []ShareRecord // retained after failed flushes (bounded)
@@ -105,19 +127,47 @@ func NewShareWriter(store *Store, log *logging.Logger, opts WriterOptions) *Shar
 			w.log.Error("partition bootstrap failed", "err", err)
 		}
 	}
+	// Open the durable WAL when configured. A failure here is fatal to
+	// durability but not to the pool: log loudly and continue without it.
+	if opts.WALPath != "" {
+		wal, err := openShareWAL(opts.WALPath, opts.WALMaxBytes, log)
+		if err != nil {
+			w.log.Error("share WAL unavailable; running WITHOUT durable share persistence", "err", err)
+		} else {
+			w.wal = wal
+			w.wg.Add(1)
+			go w.recoveryLoop(ctx)
+		}
+	}
 	w.wg.Add(1)
 	go w.loop(ctx)
 	return w
 }
 
 // Enqueue hands a share to the writer. NEVER blocks: on a full queue the share
-// is dropped and counted, keeping the submit path latency flat.
+// is written to the durable WAL (if configured) so it is not lost; only when
+// no WAL is configured, or the WAL itself cannot accept it, is the share
+// dropped and counted.
 func (w *ShareWriter) Enqueue(rec ShareRecord) {
 	select {
 	case w.ch <- rec:
 	default:
-		w.dropped.Add(1)
+		w.divert(rec)
 	}
+}
+
+// divert sends a share that could not be queued to the WAL, or drops it (with
+// a counter and a loud log) when no durable path exists.
+func (w *ShareWriter) divert(rec ShareRecord) {
+	if w.wal != nil {
+		if err := w.wal.append(rec); err == nil {
+			w.toWAL.Add(1)
+			return
+		} else {
+			w.log.Error("WAL append failed; share DROPPED", "err", err)
+		}
+	}
+	w.dropped.Add(1)
 }
 
 // Stats returns (written, dropped) counters.
@@ -125,10 +175,34 @@ func (w *ShareWriter) Stats() (written, dropped uint64) {
 	return w.written.Load(), w.dropped.Load()
 }
 
+// WALStats returns (sharesDivertedToWAL, currentWALBytes).
+func (w *ShareWriter) WALStats() (diverted uint64, walBytes int64) {
+	var b int64
+	if w.wal != nil {
+		b = w.wal.len()
+	}
+	return w.toWAL.Load(), b
+}
+
 // Close flushes what it can and stops the loop.
 func (w *ShareWriter) Close() {
 	w.cancel()
 	w.wg.Wait()
+	// Final WAL drain attempt with a fresh context so acknowledged shares
+	// still land if the database is reachable at shutdown.
+	if w.wal != nil {
+		if w.wal.len() > 0 {
+			err := w.wal.drain(func(recs []ShareRecord) error {
+				dctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				return w.copySharesCtx(dctx, recs)
+			})
+			if err != nil {
+				w.log.Warn("final WAL drain incomplete; records remain on disk for next start", "err", err)
+			}
+		}
+		_ = w.wal.close()
+	}
 }
 
 func (w *ShareWriter) loop(ctx context.Context) {
@@ -209,11 +283,17 @@ func (w *ShareWriter) loop(ctx context.Context) {
 
 func (w *ShareWriter) retain(recs []ShareRecord) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
 	w.pending = append(w.pending, recs...)
+	var overflow []ShareRecord
 	if over := len(w.pending) - maxRetainedShares; over > 0 {
-		w.dropped.Add(uint64(over))
+		// Oldest retained shares exceed the in-memory bound. Instead of
+		// dropping them, move them to the durable WAL for later replay.
+		overflow = append(overflow, w.pending[:over]...)
 		w.pending = w.pending[over:]
+	}
+	w.mu.Unlock()
+	for _, rec := range overflow {
+		w.divert(rec)
 	}
 }
 

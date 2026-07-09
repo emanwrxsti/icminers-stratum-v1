@@ -1,0 +1,35 @@
+{
+  "mode": "all-in-one",
+  "region": "smoke",
+  "nodeId": "smoke-1",
+  "logging": { "level": "info", "json": false },
+  "stratum": {
+    "bindAddress": "127.0.0.1",
+    "ports": [
+      { "port": 13033, "poolId": "btc-solo", "varDiff": false, "difficulty": 0.000000001 }
+    ]
+  },
+  "pools": [
+    {
+      "id": "btc-solo", "enabled": true, "coinSymbol": "BTC", "paymentMode": "pplns",
+      "poolFeePercent": 1.0, "pplnsFactor": 2.0,
+      "minimumPaymentSats": 1000, "subtractFeeFromMiners": true,
+      "address": "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4",
+      "coinbaseTag": "/ICMINERS-SMOKE/",
+      "templatePollInterval": "300ms", "errorBackoff": "5s"
+    }
+  ],
+  "coins": [
+    {
+      "symbol": "BTC", "name": "Bitcoin", "algo": "sha256d", "network": "mainnet",
+      "rpcUrl": "http://127.0.0.1:18333", "rpcUser": "u", "rpcPassword": "p",
+      "maturityDepth": 100, "orphanDepth": 12
+    }
+  ],
+  "postgres": {
+    "enabled": true,
+    "dsn": "REPLACED_BY_SCRIPT",
+    "shareBatchSize": 5, "shareFlushInterval": "200ms",
+    "shareWalPath": "/tmp/gostratum-smoke/shares.wal"
+  }
+}

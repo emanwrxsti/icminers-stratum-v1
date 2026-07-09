@@ -211,6 +211,15 @@ type PostgresConfig struct {
 	ShareBatchSize int `json:"shareBatchSize"`
 	// ShareFlushInterval flushes small batches at this cadence (default 2s).
 	ShareFlushInterval Duration `json:"shareFlushInterval"`
+	// ShareWALPath enables the durable share write-ahead log. When set, shares
+	// that cannot be absorbed in memory (queue full, or the retention bound
+	// hit during a database outage) are written here and replayed on recovery
+	// instead of being dropped. Strongly recommended in production so no
+	// acknowledged, reward-bearing share is ever silently lost. Empty (the
+	// default) preserves the older drop-under-overload behavior.
+	ShareWALPath string `json:"shareWalPath"`
+	// ShareWALMaxBytes bounds the WAL file (default 1 GiB).
+	ShareWALMaxBytes int64 `json:"shareWalMaxBytes"`
 }
 
 // CoinConfig describes a coin daemon.

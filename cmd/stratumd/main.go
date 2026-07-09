@@ -17,7 +17,9 @@ import (
 
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/api"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/bans"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/bitcoinlike"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/btc"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/ltc"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/rpc"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/config"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/jobs"
@@ -253,6 +255,8 @@ func main() {
 			QueueSize:     cfg.Postgres.ShareQueueSize,
 			BatchSize:     cfg.Postgres.ShareBatchSize,
 			FlushInterval: time.Duration(cfg.Postgres.ShareFlushInterval),
+			WALPath:       cfg.Postgres.ShareWALPath,
+			WALMaxBytes:   cfg.Postgres.ShareWALMaxBytes,
 		})
 		recorders = append(recorders, &storageRecorder{writer: writer, store: store, region: cfg.Region, log: log})
 		log.Info("postgres persistence enabled")
@@ -329,8 +333,12 @@ func main() {
 		wr := writer
 		reg.Gauge("sharewriter_written_total", "Shares persisted by the async writer.", nil,
 			func() float64 { w, _ := wr.Stats(); return float64(w) })
-		reg.Gauge("sharewriter_dropped_total", "Shares dropped by the async writer.", nil,
+		reg.Gauge("sharewriter_dropped_total", "Shares dropped by the async writer (should stay 0 with the WAL enabled).", nil,
 			func() float64 { _, d := wr.Stats(); return float64(d) })
+		reg.Gauge("sharewriter_wal_total", "Shares diverted to the durable WAL.", nil,
+			func() float64 { n, _ := wr.WALStats(); return float64(n) })
+		reg.Gauge("sharewriter_wal_bytes", "Current durable WAL size in bytes.", nil,
+			func() float64 { _, b := wr.WALStats(); return float64(b) })
 	}
 	// The server fans mining.notify out to sessions; give it to job managers.
 	registry.SetBroadcaster(srv)
@@ -403,26 +411,33 @@ func main() {
 }
 
 // buildAdapter constructs the coin adapter for a pool from its coin config.
-// Only BTC (sha256d via Bitcoin Core) is implemented in Stage 2; further coins
-// (RXD, SCASH, ALPH, ...) land in later stages behind the same seam.
-func buildAdapter(cfg *config.Config, p config.PoolConfig) (*btc.Adapter, error) {
+// Bitcoin-like coins share one implementation (internal/coins/bitcoinlike);
+// each supported symbol selects its address params and proof-of-work hash.
+// Currently BTC (sha256d) and LTC (scrypt) are wired; further coins land
+// behind the same seam.
+func buildAdapter(cfg *config.Config, p config.PoolConfig) (*bitcoinlike.Adapter, error) {
 	coin, ok := cfg.CoinBySymbol(p.CoinSymbol)
 	if !ok {
 		return nil, fmt.Errorf("pool %s: no coin config for symbol %q", p.ID, p.CoinSymbol)
-	}
-	if !strings.EqualFold(coin.Symbol, "BTC") {
-		return nil, fmt.Errorf("pool %s: coin %s not implemented yet (stage 2 is BTC only)", p.ID, coin.Symbol)
 	}
 	if coin.RPCURL == "" {
 		return nil, fmt.Errorf("pool %s: coin %s has no rpcUrl", p.ID, coin.Symbol)
 	}
 	client := rpc.New(rpc.Options{URL: coin.RPCURL, User: coin.RPCUser, Password: coin.RPCPassword})
-	return btc.New(btc.Options{
-		RPC:         client,
-		Network:     coin.Network,
-		PoolAddress: p.Address,
-		CoinbaseTag: p.CoinbaseTag,
-	})
+	switch strings.ToUpper(coin.Symbol) {
+	case "BTC":
+		return btc.New(btc.Options{
+			RPC: client, Network: coin.Network,
+			PoolAddress: p.Address, CoinbaseTag: p.CoinbaseTag,
+		})
+	case "LTC":
+		return ltc.New(ltc.Options{
+			RPC: client, Network: coin.Network,
+			PoolAddress: p.Address, CoinbaseTag: p.CoinbaseTag,
+		})
+	default:
+		return nil, fmt.Errorf("pool %s: coin %s not implemented (supported: BTC, LTC)", p.ID, coin.Symbol)
+	}
 }
 
 // nodePrefix derives a 2-byte extranonce1 prefix from the node id.

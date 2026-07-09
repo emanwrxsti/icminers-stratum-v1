@@ -27,6 +27,15 @@ var BTCTestNet = AddressParams{P2PKHVersion: 0x6f, P2SHVersion: 0xc4, Bech32HRP:
 // BTCRegTest are Bitcoin regtest address parameters.
 var BTCRegTest = AddressParams{P2PKHVersion: 0x6f, P2SHVersion: 0xc4, Bech32HRP: "bcrt"}
 
+// LTCMainNet are Litecoin mainnet address parameters (scrypt family).
+var LTCMainNet = AddressParams{P2PKHVersion: 0x30, P2SHVersion: 0x32, Bech32HRP: "ltc"}
+
+// LTCTestNet are Litecoin testnet4 address parameters.
+var LTCTestNet = AddressParams{P2PKHVersion: 0x6f, P2SHVersion: 0x3a, Bech32HRP: "tltc"}
+
+// LTCRegTest are Litecoin regtest address parameters.
+var LTCRegTest = AddressParams{P2PKHVersion: 0x6f, P2SHVersion: 0x3a, Bech32HRP: "rltc"}
+
 // AddressToScript converts a payout address into its scriptPubKey. Supports
 // base58check P2PKH/P2SH and bech32/bech32m segwit v0-v16 programs.
 func AddressToScript(address string, params AddressParams) ([]byte, error) {

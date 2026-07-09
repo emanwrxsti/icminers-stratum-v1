@@ -1,9 +1,11 @@
-// Package btc implements the CoinAdapter for Bitcoin (and BTC
-// testnet/regtest). It is a thin constructor over internal/coins/bitcoinlike:
-// Bitcoin supplies SHA256d proof-of-work, the BTC address parameters, and the
-// ASICBoost version-rolling mask; everything else (GBT, coinbase, merkle,
-// header, block assembly, submit) is the shared bitcoin-like implementation.
-package btc
+// Package ltc implements the CoinAdapter for Litecoin and its scrypt-family
+// relatives (testnet/regtest). It is a thin constructor over
+// internal/coins/bitcoinlike: Litecoin supplies scrypt(N=1024,r=1,p=1)
+// proof-of-work and the LTC address parameters; every other part of block
+// production is the shared bitcoin-like implementation. This is the second
+// coin that proves the CoinAdapter abstraction: no forked block logic, only a
+// different PoW hash and address set.
+package ltc
 
 import (
 	"fmt"
@@ -15,52 +17,49 @@ import (
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/rpc"
 )
 
-// Adapter is the Bitcoin CoinAdapter (an alias of the shared implementation).
+// Adapter is the Litecoin CoinAdapter (an alias of the shared implementation).
 type Adapter = bitcoinlike.Adapter
 
-// Options configures the BTC adapter.
+// Options configures the LTC adapter.
 type Options struct {
-	// RPC is the daemon client (Bitcoin Core).
+	// RPC is the daemon client (Litecoin Core).
 	RPC *rpc.Client
 	// Network selects address parameters: "mainnet" (default), "testnet",
 	// or "regtest".
 	Network string
 	// PoolAddress receives block rewards; validated at construction.
 	PoolAddress string
-	// CoinbaseTag is embedded in the coinbase scriptSig, e.g. "/ICMINERS/".
+	// CoinbaseTag is embedded in the coinbase scriptSig.
 	CoinbaseTag string
 	// ExtraNonce1Size/ExtraNonce2Size are the stratum extranonce widths.
 	ExtraNonce1Size int
 	ExtraNonce2Size int
 }
 
-// VersionRollingMask is the version-rolling (ASICBoost) mask the pool
-// advertises in mining.configure and enforces on submit.
-const VersionRollingMask uint32 = 0x1fffe000
-
-// New builds and validates a BTC adapter.
+// New builds and validates an LTC adapter.
 func New(opts Options) (*Adapter, error) {
 	if opts.RPC == nil {
-		return nil, fmt.Errorf("btc: nil rpc client")
+		return nil, fmt.Errorf("ltc: nil rpc client")
 	}
 	var params bitcoinbase.AddressParams
 	switch strings.ToLower(opts.Network) {
 	case "", "mainnet":
-		params = bitcoinbase.BTCMainNet
+		params = bitcoinbase.LTCMainNet
 	case "testnet", "signet":
-		params = bitcoinbase.BTCTestNet
+		params = bitcoinbase.LTCTestNet
 	case "regtest":
-		params = bitcoinbase.BTCRegTest
+		params = bitcoinbase.LTCRegTest
 	default:
-		return nil, fmt.Errorf("btc: unknown network %q", opts.Network)
+		return nil, fmt.Errorf("ltc: unknown network %q", opts.Network)
 	}
 	return bitcoinlike.New(bitcoinlike.Spec{
-		CoinName:           "Bitcoin",
-		CoinSymbol:         "BTC",
-		AlgoName:           "sha256d",
-		Params:             params,
-		PoW:                nil, // defaults to SHA256d
-		VersionRollingMask: VersionRollingMask,
+		CoinName:   "Litecoin",
+		CoinSymbol: "LTC",
+		AlgoName:   "scrypt",
+		Params:     params,
+		PoW:        bitcoinbase.ScryptHash,
+		// Litecoin does not use ASICBoost version rolling.
+		VersionRollingMask: 0,
 	}, bitcoinlike.Options{
 		RPC:             opts.RPC,
 		PoolAddress:     opts.PoolAddress,

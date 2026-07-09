@@ -5,31 +5,59 @@ supervisor**: every coin/pool runs as an isolated service with its own lifecycle
 context, and goroutines, so maintaining, restarting, or breaking one coin never
 affects any other pool or the global stratum server.
 
-This repository is being built in clean stages. **All nine build stages are complete**: a compiling, tested, zero-dependency BTC pool
-core. Miners subscribe/authorize, receive real Bitcoin Core
-`getblocktemplate`-derived `mining.notify` jobs (coinbase split, merkle
-branch, cleanJobs semantics), and submit shares that are fully validated in
-memory — header reconstruction, share/network target checks, version rolling,
-ntime window, duplicate detection — with block candidates assembled
-(witness-aware) and pushed to the daemon via `submitblock` off the reply path.
-Accepted shares and found blocks now persist to PostgreSQL through an async
-batched writer that keeps every database write off the stratum submit path
-(monthly-partitioned `shares`, idempotent `blocks`). An in-process HTTP API serves live stats
-(hashrate, shares, blocks per pool and miner), DB-backed block/miner history,
-and token-guarded per-pool admin lifecycle control
-(pause/resume/drain/maintenance/restart/disable). Master/regional deployment is live: regional stratum
-nodes publish shares, blocks, and pool-state over NATS JetStream (with a
-bounded disk spool that survives full NATS outages), the master consumes them
-into PostgreSQL, and the master's admin API issues per-pool lifecycle commands
-that every regional follows. `rewardd` confirms found blocks against the daemon
-(maturity + orphan handling) and credits miner balances by the pool's payment
-scheme — PPLNS, PROP, or SOLO — with exact integer satoshi accounting and an
-auditable `balance_changes` trail. Hardening is in: per-session vardiff with
-raise-grace, per-IP banning (invalid ratio, malformed floods, failed auth),
-and a dependency-free Prometheus `/metrics` endpoint. RXD, SCASH, and ALPH
-are intentionally not implemented yet. See [docs/roadmap.md](docs/roadmap.md)
-for exactly what is done and what is pending. CI runs gofmt/vet/test/race/build
-on every push (`.github/workflows/go.yml`).
+This repository is built in clean stages, all nine of which are complete. It is
+a compiling, tested pool core for Bitcoin-like coins (Bitcoin via SHA256d and
+Litecoin via scrypt today, both over the same `CoinAdapter` implementation).
+Miners subscribe/authorize, receive real `getblocktemplate`-derived
+`mining.notify` jobs (coinbase split, merkle branch, cleanJobs semantics), and
+submit shares that are fully validated in memory — header reconstruction,
+share/network target checks, version rolling, ntime window, duplicate
+detection — with block candidates assembled (witness-aware) and pushed to the
+daemon via `submitblock` off the reply path.
+
+Accepted shares and found blocks persist to PostgreSQL through an async batched
+writer that keeps every database write off the stratum submit path
+(monthly-partitioned `shares`, idempotent `blocks`). Share persistence is
+**durable**: when the in-memory writer cannot keep up (queue full, or a
+database outage exceeds the in-memory retention bound), shares are written to a
+disk write-ahead log and replayed on recovery instead of being dropped, so no
+acknowledged, reward-bearing share is silently lost.
+
+An in-process HTTP API serves live stats (hashrate, shares, blocks per pool and
+miner), DB-backed block/miner/payment history, and token-guarded per-pool admin
+lifecycle control (pause/resume/drain/maintenance/restart/disable).
+Master/regional deployment is live: regional stratum nodes publish shares,
+blocks, and pool-state over NATS JetStream (with a bounded disk spool that
+survives full NATS outages), the master consumes them into PostgreSQL, and the
+master's admin API issues per-pool lifecycle commands that every regional
+follows.
+
+`rewardd` confirms found blocks against the daemon (maturity + orphan handling)
+and credits miner balances by the pool's payment scheme — PPLNS, PROP, or SOLO
+— with exact integer satoshi accounting and an auditable `balance_changes`
+trail. `payoutd` moves credited balances on-chain per pool with a deduct-then-
+send safety model: balances are deducted and payment rows created atomically
+before the wallet `sendmany`, a failed send refunds atomically, and a batch
+interrupted between deduct and send is surfaced for operator reconciliation
+rather than silently retried. Hardening is in: per-session vardiff with
+raise-grace, per-IP banning (invalid ratio, malformed floods, failed auth), and
+a dependency-free Prometheus `/metrics` endpoint.
+
+**Dependencies:** the standard library plus `github.com/jackc/pgx/v5`
+(PostgreSQL), `github.com/nats-io/nats.go` (JetStream messaging), and
+`golang.org/x/crypto` (scrypt for Litecoin).
+
+**Coins:** BTC (sha256d) and LTC (scrypt) are implemented and tested behind the
+shared `internal/coins/bitcoinlike` adapter. Adding another Bitcoin-derived
+coin is a ~40-line constructor selecting address parameters and a PoW hash;
+non-Bitcoin chains (e.g. Alephium) are not implemented. See
+[docs/roadmap.md](docs/roadmap.md) for exactly what is done and what is pending.
+
+**CI** (`.github/workflows/go.yml`) runs `gofmt`, `go vet`, `go test ./...`,
+`go test -race ./...`, and builds all three binaries (`stratumd`, `rewardd`,
+`payoutd`) on every push, then runs an end-to-end integration smoke
+(`scripts/smoke.sh`: fake daemon → miner submit → block candidate → DB block →
+`rewardd` credit → `payoutd` sendmany, asserting exact satoshi conservation).
 
 ## Design guarantees baked in from Stage 1
 

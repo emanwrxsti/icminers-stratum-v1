@@ -76,6 +76,17 @@
       "rpcPassword": "CHANGE_ME",
       "maturityDepth": 100,
       "orphanDepth": 12
+    },
+    {
+      "symbol": "LTC",
+      "name": "Litecoin",
+      "algo": "scrypt",
+      "network": "mainnet",
+      "rpcUrl": "http://127.0.0.1:9332",
+      "rpcUser": "user",
+      "rpcPassword": "pass",
+      "maturityDepth": 100,
+      "orphanDepth": 12
     }
   ],
   "postgres": {
@@ -83,7 +94,9 @@
     "dsn": "postgres://user:password@127.0.0.1:5432/gostratumpool",
     "shareQueueSize": 65536,
     "shareBatchSize": 500,
-    "shareFlushInterval": "2s"
+    "shareFlushInterval": "2s",
+    "shareWalPath": "/var/lib/gostratum/shares.wal",
+    "shareWalMaxBytes": 1073741824
   },
   "api": {
     "enabled": true,

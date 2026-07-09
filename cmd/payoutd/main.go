@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/btc"
+	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/ltc"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/coins/rpc"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/config"
 	"github.com/emanwrxsti/icminers-stratum-v1/internal/logging"
@@ -101,21 +102,34 @@ func buildProcessor(cfg *config.Config, p config.PoolConfig, store *postgres.Sto
 	if !ok {
 		return nil, fmt.Errorf("no coin config for symbol %q", p.CoinSymbol)
 	}
-	if !strings.EqualFold(coin.Symbol, "BTC") {
-		return nil, fmt.Errorf("coin %s not implemented (BTC only until further stages)", coin.Symbol)
-	}
 	if coin.RPCURL == "" {
 		return nil, fmt.Errorf("coin %s has no rpcUrl", coin.Symbol)
 	}
 	client := rpc.New(rpc.Options{URL: coin.RPCURL, User: coin.RPCUser, Password: coin.RPCPassword})
-	adapter, err := btc.New(btc.Options{
-		RPC:         client,
-		Network:     coin.Network,
-		PoolAddress: p.Address,
-		CoinbaseTag: p.CoinbaseTag,
-	})
-	if err != nil {
-		return nil, err
+	// The address validator must match the coin so payout addresses are
+	// checked against the right network parameters.
+	var adapter payouts.AddressValidator
+	switch strings.ToUpper(coin.Symbol) {
+	case "BTC":
+		a, err := btc.New(btc.Options{
+			RPC: client, Network: coin.Network,
+			PoolAddress: p.Address, CoinbaseTag: p.CoinbaseTag,
+		})
+		if err != nil {
+			return nil, err
+		}
+		adapter = a
+	case "LTC":
+		a, err := ltc.New(ltc.Options{
+			RPC: client, Network: coin.Network,
+			PoolAddress: p.Address, CoinbaseTag: p.CoinbaseTag,
+		})
+		if err != nil {
+			return nil, err
+		}
+		adapter = a
+	default:
+		return nil, fmt.Errorf("coin %s not implemented (supported: BTC, LTC)", coin.Symbol)
 	}
 	subtractFee := true
 	if p.SubtractFeeFromMiners != nil {

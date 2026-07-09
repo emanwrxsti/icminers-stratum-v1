@@ -285,6 +285,49 @@ hardening.
       and a forced sendmany failure refunded the balance whole and marked the
       payment `failed`.
 
-All nine stages are complete. Future work beyond this roadmap: further coin
-families (RXD, SCASH, ALPH) behind the existing `CoinAdapter`/`bitcoinbase`
-seams, and a standalone YAML config front-end.
+All nine numbered stages are complete.
+
+## Stage 10 — DONE: durability, CI, and a second coin
+
+This stage addressed five gaps found in review of the "complete" system.
+
+- [x] **Durable share persistence (no silent drop).** The async share writer
+      now has an optional disk write-ahead log (`shareWalPath`). Shares that
+      cannot be absorbed in memory — a full queue, or a database outage that
+      exceeds the in-memory retention bound — are appended to the WAL instead
+      of being dropped and counted, then replayed into the database by a
+      recovery loop (and a final drain on shutdown). This closes the one path
+      by which an acknowledged, reward-bearing share could be lost. New
+      metrics: `sharewriter_wal_total`, `sharewriter_wal_bytes`
+      (`sharewriter_dropped_total` should stay 0 with the WAL enabled). Tests
+      cover append/drain roundtrip, crash-reopen recovery, and a writer whose
+      1-slot queue overflows 2000 shares with zero drops and full DB landing.
+- [x] **Real CI** (`.github/workflows/go.yml`): a `test` job running `gofmt`,
+      `go vet`, `go test ./...`, `go test -race ./...`, and building all three
+      binaries (`stratumd`, `rewardd`, `payoutd`) against Postgres + NATS
+      services; and a `smoke` job running the integration script end to end.
+- [x] **Integration smoke script** (`scripts/smoke.sh` + `scripts/smoke/`):
+      fake bitcoind → `stratumd` → miner submit → block candidate → DB block →
+      `rewardd` confirm+credit → `payoutd` sendmany, asserting exact satoshi
+      conservation (312,500,000 = 309,375,000 credited + 3,125,000 fee; payout
+      of 3.09375000 on-chain; balances zeroed; idempotent second pass). Runs in
+      CI and locally.
+- [x] **Second coin — Litecoin (scrypt)** — proving the `CoinAdapter`
+      abstraction. The Bitcoin-family logic (GBT, coinbase, merkle, header,
+      block assembly, submit, addresses) moved into a shared, parameterized
+      `internal/coins/bitcoinlike` adapter; `btc` and `ltc` are now ~40–75
+      line constructors that supply only their address parameters and PoW
+      hash. `ltc` uses `scrypt(N=1024,r=1,p=1)`, KAT-verified against the
+      Litecoin genesis header (the scrypt PoW meets the genesis target; the
+      block identity remains SHA256d). A test mines a real scrypt share and
+      confirms it validates as a block candidate with difficulty derived from
+      scrypt, not SHA256d. All three daemons dispatch on coin symbol; BTC
+      behavior is unchanged (existing BTC tests pass against the shared code).
+- [x] **Docs corrected** to match reality: dependencies listed honestly
+      (pgx, nats.go, x/crypto — not "zero-dependency"), coin support stated as
+      BTC + LTC, and CI/smoke described accurately.
+
+Future work beyond this roadmap: additional Bitcoin-derived coins (each a small
+constructor over `bitcoinlike`), non-Bitcoin chains such as Alephium (which
+need a genuinely different adapter, not the bitcoin-like base), and a standalone
+YAML config front-end.

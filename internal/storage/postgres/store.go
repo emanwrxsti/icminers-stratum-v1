@@ -120,6 +120,23 @@ var migrations = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_balance_changes_pool_miner
 		ON balance_changes (poolid, miner, created)`,
+	// 004: Stage 9 payouts.
+	`CREATE TABLE IF NOT EXISTS payments (
+		id          bigserial PRIMARY KEY,
+		poolid      text   NOT NULL,
+		miner       text   NOT NULL,
+		address     text   NOT NULL,
+		amount_sats bigint NOT NULL,
+		txid        text   NOT NULL DEFAULT '',
+		status      text   NOT NULL DEFAULT 'pending',
+		batch_id    text   NOT NULL DEFAULT '',
+		created     timestamptz NOT NULL DEFAULT now(),
+		updated     timestamptz NOT NULL DEFAULT now()
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_payments_pool_status
+		ON payments (poolid, status)`,
+	`CREATE INDEX IF NOT EXISTS idx_payments_pool_miner
+		ON payments (poolid, miner, created)`,
 }
 
 // applyMigrations records progress in schema_migrations and only runs pending

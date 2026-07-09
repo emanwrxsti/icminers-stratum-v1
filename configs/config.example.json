@@ -44,7 +44,10 @@
       "errorBackoff": "15s",
       "maintenanceMessage": "BTC shared pool is under maintenance. Check icminers.com for status.",
       "pplnsFactor": 2.0,
-      "rewardInterval": "30s"
+      "rewardInterval": "30s",
+      "minimumPaymentSats": 100000,
+      "payoutInterval": "10m",
+      "subtractFeeFromMiners": true
     },
     {
       "id": "btc-solo",
@@ -56,7 +59,10 @@
       "coinbaseTag": "/ICMINERS/",
       "templatePollInterval": "500ms",
       "errorBackoff": "15s",
-      "rewardInterval": "30s"
+      "rewardInterval": "30s",
+      "minimumPaymentSats": 100000,
+      "payoutInterval": "10m",
+      "subtractFeeFromMiners": true
     }
   ],
   "coins": [

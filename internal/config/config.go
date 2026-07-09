@@ -181,6 +181,16 @@ type PoolConfig struct {
 	PPLNSFactor float64 `json:"pplnsFactor"`
 	// RewardInterval is rewardd's per-pool processing cadence (default 30s).
 	RewardInterval Duration `json:"rewardInterval"`
+
+	// MinimumPaymentSats is the payout threshold in base units (default
+	// 100000 sats = 0.001 BTC). Balances below it accumulate.
+	MinimumPaymentSats int64 `json:"minimumPaymentSats"`
+	// PayoutInterval is payoutd's per-pool cadence (default 10m).
+	PayoutInterval Duration `json:"payoutInterval"`
+	// SubtractFeeFromMiners: when true (default), the on-chain tx fee is
+	// subtracted proportionally from recipients (bitcoind sendmany
+	// subtractfeefrom); when false the pool wallet absorbs it.
+	SubtractFeeFromMiners *bool `json:"subtractFeeFromMiners"`
 	// CoinbaseTag is embedded in the coinbase scriptSig (e.g. "/ICMINERS/").
 	CoinbaseTag string `json:"coinbaseTag"`
 
@@ -270,6 +280,16 @@ func (c *Config) applyDefaults() {
 		}
 		if c.Pools[i].RewardInterval <= 0 {
 			c.Pools[i].RewardInterval = Duration(30 * time.Second)
+		}
+		if c.Pools[i].MinimumPaymentSats <= 0 {
+			c.Pools[i].MinimumPaymentSats = 100000
+		}
+		if c.Pools[i].PayoutInterval <= 0 {
+			c.Pools[i].PayoutInterval = Duration(10 * time.Minute)
+		}
+		if c.Pools[i].SubtractFeeFromMiners == nil {
+			t := true
+			c.Pools[i].SubtractFeeFromMiners = &t
 		}
 	}
 	for i := range c.Coins {

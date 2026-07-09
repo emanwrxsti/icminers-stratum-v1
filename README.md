@@ -5,7 +5,7 @@ supervisor**: every coin/pool runs as an isolated service with its own lifecycle
 context, and goroutines, so maintaining, restarting, or breaking one coin never
 affects any other pool or the global stratum server.
 
-This repository is being built in clean stages. **All eight build stages are complete**: a compiling, tested, zero-dependency BTC pool
+This repository is being built in clean stages. **All nine build stages are complete**: a compiling, tested, zero-dependency BTC pool
 core. Miners subscribe/authorize, receive real Bitcoin Core
 `getblocktemplate`-derived `mining.notify` jobs (coinbase split, merkle
 branch, cleanJobs semantics), and submit shares that are fully validated in

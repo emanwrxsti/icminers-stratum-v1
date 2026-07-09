@@ -1,0 +1,24 @@
+[Unit]
+Description=GoStratumPool payout daemon (on-chain miner payments)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gostratum
+Group=gostratum
+WorkingDirectory=/opt/gostratum
+ExecStart=/opt/gostratum/bin/payoutd -config /opt/gostratum/configs/config.json
+Restart=on-failure
+RestartSec=10s
+KillSignal=SIGTERM
+TimeoutStopSec=60s
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/gostratum
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

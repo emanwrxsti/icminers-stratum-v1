@@ -253,7 +253,38 @@ hardening.
       band/window reset), ban thresholds + expiry + disabled mode + healthy
       miner never banned, metrics rendering (series identity, headers).
 
-All eight stages are complete. Future work beyond this roadmap: payoutd
-(moving credited balances on-chain), further coin families (RXD, SCASH, ALPH)
-behind the existing `CoinAdapter`/`bitcoinbase` seams, and a standalone YAML
-config front-end.
+## Stage 9 — DONE: payouts (`payoutd`)
+
+- [x] `internal/payouts`: exact 8-decimal amount strings from base units
+      (`SatsToAmountString`; bitcoind takes string amounts, no JSON float
+      loss). Per-pool `Processor`, panic-isolated, `-once` supported.
+- [x] Deduct-then-send safety model. `BeginPayout` runs in ONE transaction:
+      lock balances >= minimum `FOR UPDATE`, validate each payout address via
+      the coin adapter (invalid -> skipped, balance retained), deduct, write a
+      negative `payout` balance_change, and insert a `sending` payment row
+      tagged with a batch id. Only then does the wallet `sendmany` fire (one
+      tx, exact string amounts, `subtractfeefrom` recipients by default).
+      Success -> rows marked `sent` with the txid. Failure -> `RefundBatch`
+      atomically re-credits and marks rows `failed`.
+- [x] Crash safety: a batch deducted but with no recorded send outcome is
+      surfaced every pass as a STUCK batch for operator reconciliation and is
+      NEVER auto-refunded (the transaction may have broadcast). A 5-minute
+      grace keeps in-flight batches from being flagged.
+- [x] Migration 004: `payments` table (status pending/sending/sent/failed,
+      batch_id, txid) with pool+status and pool+miner indexes.
+- [x] `cmd/payoutd` (reads the shared config, runs where the wallets live),
+      `GET /api/pools/{id}/payments` (optional `?miner=`), and a systemd unit.
+- [x] Tests: amount-string KATs, every processor path (success, send-failure
+      refund, invalid-address skip, nothing-payable no-op, mark-failure
+      surfacing, stuck-batch surfacing), exact `sendmany` param shape, and
+      postgres integration for threshold/deduction, atomic refund with
+      conservation, stuck-batch age filtering, and payment listing.
+- [x] Live smoke: mined a block -> `rewardd` credited 309,375,000 sats
+      (+3,125,000 fee) -> `payoutd` sent exactly 3.09375000 on-chain,
+      balances zeroed, payment `sent` with txid, a second pass was a no-op,
+      and a forced sendmany failure refunded the balance whole and marked the
+      payment `failed`.
+
+All nine stages are complete. Future work beyond this roadmap: further coin
+families (RXD, SCASH, ALPH) behind the existing `CoinAdapter`/`bitcoinbase`
+seams, and a standalone YAML config front-end.

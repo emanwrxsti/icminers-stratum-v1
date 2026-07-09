@@ -108,6 +108,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/pools/{id}/blocks", s.handlePoolBlocks)
 	s.mux.HandleFunc("GET /api/pools/{id}/miners", s.handlePoolMiners)
 	s.mux.HandleFunc("GET /api/pools/{id}/miners/{miner}", s.handlePoolMiner)
+	s.mux.HandleFunc("GET /api/pools/{id}/payments", s.handlePoolPayments)
 
 	// Admin (per-pool lifecycle). Registered only when a token is configured.
 	if s.opts.AdminToken != "" {
@@ -307,6 +308,28 @@ func (s *Server) handlePoolMiner(w http.ResponseWriter, r *http.Request) {
 		out["workers"] = workers
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handlePoolPayments(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.findPool(r.PathValue("id"))
+	if !ok {
+		writeJSON(w, http.StatusNotFound, errBody{"unknown pool"})
+		return
+	}
+	if s.opts.Store == nil {
+		writeJSON(w, http.StatusServiceUnavailable, errBody{"database not configured"})
+		return
+	}
+	miner := r.URL.Query().Get("miner")
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	payments, err := s.opts.Store.ListPayments(r.Context(), p.ID, miner, limit, offset)
+	if err != nil {
+		s.opts.Log.Error("list payments failed", "pool", p.ID, "err", err)
+		writeJSON(w, http.StatusInternalServerError, errBody{"query failed"})
+		return
+	}
+	writeJSON(w, http.StatusOK, payments)
 }
 
 func parseWindow(s string, def time.Duration) time.Duration {
